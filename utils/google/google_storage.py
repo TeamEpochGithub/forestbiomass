@@ -25,7 +25,7 @@ def upload_file_remote(path: str, bucket_name: str) -> str:
     return f"gs://{bucket_name}/{path.split('/')[-1]}"
 
 
-def delete_file_remote(path, bucket_name):
+def delete_file_remote(path: str, bucket_name: str) -> None:
     """
     Method to delete
     :param path: Path to file on GCS to be deleted
