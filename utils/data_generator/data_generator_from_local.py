@@ -1,12 +1,9 @@
-# Imports
-import numpy
+#Imports
 import tensorflow as tf
 from keras import datasets, layers, models
-import matplotlib.pyplot as plt
+
 import numpy as np
-# import pandas as pd
-# import cv2
-# from tqdm import tqdm
+
 import os
 
 # from classification_models.tfkeras import Classifiers
@@ -48,7 +45,7 @@ class LocalDataGenerator(tf.keras.utils.Sequence):
 
         batch_y = np.stack([np.load(f + "/label.npy") for f in batch_filenames], axis=0)
 
-        # batch_x = np.concatenate([np.load(f + "/")])
+        # concatenating all the months together and then stacking on each other
         batch_x = np.stack([np.array(np.concatenate([np.load(f + '/' + f.split('/')[-1] + "_" + str(month) + ".npy") for month in range(12)])) for f in batch_filenames])
 
 
