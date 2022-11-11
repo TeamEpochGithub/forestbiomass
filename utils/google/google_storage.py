@@ -5,7 +5,7 @@ import google
 from google.cloud import storage
 
 
-def upload_file_remote(path: str, bucket_name: str) -> str:
+def upload_file_remote(path: str, bucket_name: str = 'biomass-data') -> str:
     """
     Upload file and return path to file on Google Cloud Storage
     :param path: Path to local file (to be uploaded)
@@ -25,7 +25,7 @@ def upload_file_remote(path: str, bucket_name: str) -> str:
     return f"gs://{bucket_name}/{path.split('/')[-1]}"
 
 
-def delete_file_remote(path: str, bucket_name: str) -> None:
+def delete_file_remote(path: str, bucket_name: str = 'biomass-data') -> None:
     """
     Method to delete
     :param path: Path to file on GCS to be deleted
@@ -45,9 +45,9 @@ def authenticate_remote():
     :return: None or error
     """
     if sys.platform == "linux":
-        os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = None  # TODO: ADD PATH TO GOOGLE STORAGE BUCKET API KEY
+        os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = "../../keys/forestbiomass-key-sietse.json"
     elif sys.platform.startswith("win"):
-        os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = None  # TODO: ADD PATH TO GOOGLE STORAGE BUCKET API KEY
+        os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = "../../keys/forestbiomass-key-sietse.json"
 
     try:
         storage.Client()
@@ -55,3 +55,7 @@ def authenticate_remote():
 
     except google.auth.exceptions.DefaultCredentialsError as e:
         return e
+
+
+if __name__ == "__main__":
+    authenticate_remote()
