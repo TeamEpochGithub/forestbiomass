@@ -1,2 +1,5 @@
 google-cloud-storage
 google~=3.0.0
+tensorflow
+keras
+numpy
