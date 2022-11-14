@@ -66,10 +66,9 @@ class LocalDataGenerator(tf.keras.utils.Sequence):
         batch_y = np.stack([np.load(f + "/label.npy") for f in batch_filenames], axis=0)
 
         # concatenating all the months together and then stacking on each other for both s1 and s2 separate
-        batch_x_s1 = np.stack([np.array(np.concatenate([np.load(f + '/' + f.split('/')[-1] + "_S1_" + str(month) + ".npy") for month in range(12)])) for f in batch_filenames])
-        batch_x_s2 = np.stack([np.array(np.concatenate([np.load(f + '/' + f.split('/')[-1] + "_S2_" + str(month) + ".npy") for month in range(12)])) for f in batch_filenames])
-        print(batch_x_s1.shape)
-        print(batch_x_s2.shape)
+        batch_x_s1 = np.stack([np.array(np.concatenate([np.load(f + '/' + str(month) + "/S1/" + str(band) + ".npy") for band in range(4) for month in range(12)])) for f in batch_filenames])
+        batch_x_s2 = np.stack([np.array(np.concatenate([np.load(f + '/' + str(month) + "/S2/" + str(band) + ".npy") for band in range(11) for month in range(12)])) for f in batch_filenames])
+
         # Return X, where X is made of loaded np arrays from the filenames
         # Shape s1 is 32 x 48 x 256 x 256 x 1 (all training arrays concatenated)
         # Shape s2 is 32 x 132 x 256 x 256 x 1 (all training arrays concatenated)
@@ -81,4 +80,4 @@ class LocalDataGenerator(tf.keras.utils.Sequence):
 if __name__ == "__main__":
     datagen = LocalDataGenerator(train_abgm_path)
     x, y = datagen[1]
-    print(x)
+    # print(x.shape)

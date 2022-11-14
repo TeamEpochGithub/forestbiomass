@@ -11,6 +11,11 @@ for _ in range(64):
 
     os.mkdir(f"../data/imgs/fake_data2/{patch}")
 
+    file_name_label = f"../data/imgs/fake_data2/{patch}/label.npy"
+    fake_label = np.ones((256, 256)) * random.randint(0, 255)
+
+    np.save(file_name_label, fake_label)
+
     # Creating fake data while merging the s1 and s2 bands together so 4+11 = 15
     # for month in range(12):
     #     file_name = f"../data/imgs/fake_data/{patch}/{patch}_{month}.npy"
@@ -22,14 +27,18 @@ for _ in range(64):
 
     #Creating separate arrays for both s1 and s2
     for month in range(12):
-        file_name_s1 = f"../data/imgs/fake_data2/{patch}/{patch}_S1_{month}.npy"
-        file_name_s2 = f"../data/imgs/fake_data2/{patch}/{patch}_S2_{month}.npy"
-        file_name_label = f"../data/imgs/fake_data2/{patch}/label.npy"
-        fake_array_s1 = np.ones((4, 256, 256)) * random.randint(0, 255)
+        os.mkdir(f"../data/imgs/fake_data2/{patch}/{month}")
+        os.mkdir(f"../data/imgs/fake_data2/{patch}/{month}/S1")
+        os.mkdir(f"../data/imgs/fake_data2/{patch}/{month}/S2")
 
-        fake_array_s2 = np.ones((11, 256, 256)) * random.randint(0, 255)
-        fake_label = np.ones((256, 256)) * random.randint(0, 255)
+        for band in range(4):
+            file_name_s1 = f"../data/imgs/fake_data2/{patch}/{month}/S1/{band}.npy"
+            fake_array_s1 = np.ones((1, 256, 256)) * random.randint(0, 255)
+            np.save(file_name_s1, fake_array_s1)
 
-        np.save(file_name_s1, fake_array_s1)
-        np.save(file_name_s2, fake_array_s2)
-        np.save(file_name_label, fake_label)
+        for band in range(11):
+            file_name_s2 = f"../data/imgs/fake_data2/{patch}/{month}/S2/{band}.npy"
+            fake_array_s2 = np.ones((1, 256, 256)) * random.randint(0, 255)
+            np.save(file_name_s2, fake_array_s2)
+
+
