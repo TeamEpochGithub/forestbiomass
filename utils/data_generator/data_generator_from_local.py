@@ -65,15 +65,16 @@ class LocalDataGenerator(tf.keras.utils.Sequence):
 
         batch_y = np.stack([np.load(f + "/label.npy") for f in batch_filenames], axis=0)
 
-        # concatenating all the months together and then stacking on each other
+        # concatenating all the months together and then stacking on each other for both s1 and s2 separate
         batch_x_s1 = np.stack([np.array(np.concatenate([np.load(f + '/' + f.split('/')[-1] + "_S1_" + str(month) + ".npy") for month in range(12)])) for f in batch_filenames])
         batch_x_s2 = np.stack([np.array(np.concatenate([np.load(f + '/' + f.split('/')[-1] + "_S2_" + str(month) + ".npy") for month in range(12)])) for f in batch_filenames])
         print(batch_x_s1.shape)
         print(batch_x_s2.shape)
         # Return X, where X is made of loaded np arrays from the filenames
-        # Shape is 32 x 180 x 256 x 256 x 1 (all training arrays concatenated)
+        # Shape s1 is 32 x 48 x 256 x 256 x 1 (all training arrays concatenated)
+        # Shape s2 is 32 x 132 x 256 x 256 x 1 (all training arrays concatenated)
         # Directories divided in patches. Patches consist of 12 arrays for each month,
-        # that contain 15 arrays from both s1(4) and s2(11) with format 256 x 256
+        # that for s1 contains 4 arrays and s2 11 arrays with format 256 x 256
 
         return (batch_x_s1, batch_x_s2), batch_y
 
