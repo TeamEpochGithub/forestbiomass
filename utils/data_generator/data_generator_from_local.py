@@ -12,7 +12,7 @@ np.random.seed(0)
 
 data_path = "../../data/imgs"
 train_features_path = "../../data/imgs/train_features"
-train_abgm_path = "../../data/imgs/fake_data/"
+train_abgm_path = "../../data/imgs/fake_data2/"
 
 class LocalDataGenerator(tf.keras.utils.Sequence):
     def __init__(self, dir_path, batch_size=32):
@@ -36,6 +36,26 @@ class LocalDataGenerator(tf.keras.utils.Sequence):
         """
         return int(np.ceil(len(self.filenames) / float(self.batch_size)))
 
+    # def __getitem__(self, idx):
+    #     """
+    #     Tells generator how to retrieve BATCH idx
+    #     """
+    #     # Get filenames for X batch
+    #     batch_filenames = self.filenames[idx * self.batch_size:(idx + 1) * self.batch_size]
+    #
+    #     batch_y = np.stack([np.load(f + "/label.npy") for f in batch_filenames], axis=0)
+    #
+    #     # concatenating all the months together and then stacking on each other
+    #     batch_x = np.stack([np.array(np.concatenate([np.load(f + '/' + f.split('/')[-1] + "_" + str(month) + ".npy") for month in range(12)])) for f in batch_filenames])
+    #     print(batch_x.shape)
+    #
+    #     # Return X, where X is made of loaded np arrays from the filenames
+    #     # Shape is 32 x 180 x 256 x 256 x 1 (all training arrays concatenated)
+    #     # Directories divided in patches. Patches consist of 12 arrays for each month,
+    #     # that contain 15 arrays from both s1(4) and s2(11) with format 256 x 256
+    #
+    #     return batch_x, batch_y
+
     def __getitem__(self, idx):
         """
         Tells generator how to retrieve BATCH idx
@@ -46,17 +66,18 @@ class LocalDataGenerator(tf.keras.utils.Sequence):
         batch_y = np.stack([np.load(f + "/label.npy") for f in batch_filenames], axis=0)
 
         # concatenating all the months together and then stacking on each other
-        batch_x = np.stack([np.array(np.concatenate([np.load(f + '/' + f.split('/')[-1] + "_" + str(month) + ".npy") for month in range(12)])) for f in batch_filenames])
-
-
+        batch_x_s1 = np.stack([np.array(np.concatenate([np.load(f + '/' + f.split('/')[-1] + "_S1_" + str(month) + ".npy") for month in range(12)])) for f in batch_filenames])
+        batch_x_s2 = np.stack([np.array(np.concatenate([np.load(f + '/' + f.split('/')[-1] + "_S2_" + str(month) + ".npy") for month in range(12)])) for f in batch_filenames])
+        print(batch_x_s1.shape)
+        print(batch_x_s2.shape)
         # Return X, where X is made of loaded np arrays from the filenames
         # Shape is 32 x 180 x 256 x 256 x 1 (all training arrays concatenated)
         # Directories divided in patches. Patches consist of 12 arrays for each month,
         # that contain 15 arrays from both s1(4) and s2(11) with format 256 x 256
 
-        return batch_x, batch_y
+        return (batch_x_s1, batch_x_s2), batch_y
 
 if __name__ == "__main__":
     datagen = LocalDataGenerator(train_abgm_path)
     x, y = datagen[1]
-    print(x.shape)
+    print(x)
