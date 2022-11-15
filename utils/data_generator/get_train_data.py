@@ -2,13 +2,9 @@ import csv
 import os
 import os.path as osp
 
-from osgeo import gdal  # https://opensourceoptions.com/blog/how-to-install-gdal-for-python-with-pip-on-windows/
-import numpy
 import numpy as np
-import osgeo.gdal
 
 import data
-import data.imgs as img_data
 from osgeo import gdal, ogr  # https://opensourceoptions.com/blog/how-to-install-gdal-for-python-with-pip-on-windows/
 import data.imgs as img_data
 
@@ -73,17 +69,17 @@ def get_n_patches(n: int) -> dict:
     return all_data
 
 
-def convert_path_to_gdal_dataset(path: str) -> osgeo.gdal.Dataset:
+def convert_path_to_gdal_dataset(path: str) -> gdal.Dataset:
     dataset = gdal.Open(path)
     return dataset
 
 
-def convert_gdal_dataset_to_ndarray(dataset: osgeo.gdal.Dataset) -> numpy.ndarray:
+def convert_gdal_dataset_to_ndarray(dataset: gdal.Dataset) -> np.ndarray:
     data = dataset.ReadAsArray()
     return data
 
 
-def save_ndarray(relative_path: str, name: str, numpy_data: numpy.ndarray):
+def save_ndarray(relative_path: str, name: str, numpy_data: np.ndarray):
     path = osp.join(osp.dirname(data.__file__), relative_path)
     if not (os.path.exists(path)):
         os.makedirs(path)
@@ -119,13 +115,13 @@ def extract_and_save_patch_names():
             current_patchname = filename[:8]
             all_patch_names.append(current_patchname)
 
-    with open(osp.join(osp.dirname(data.__file__, 'patch_names')), 'w', newline='') as myfile:
+    with open(osp.join(osp.dirname(data.__file__), 'patch_names'), 'w', newline='') as myfile:
         wr = csv.writer(myfile, quoting=csv.QUOTE_ALL)
         wr.writerow(all_patch_names)
 
 
 def save_all_patches():
-    with open(osp.join(osp.dirname(data.__file__, 'patch_names')), newline='') as f:
+    with open(osp.join(osp.dirname(data.__file__), 'patch_names'), newline='') as f:
         reader = csv.reader(f)
         patch_name_data = list(reader)
     patch_names = patch_name_data[0]
