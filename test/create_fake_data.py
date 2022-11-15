@@ -6,7 +6,7 @@ def gen_fake_patch_id():
     return "".join([random.choice('ABCDEFGHIJKLMNPQRSTUVWXYZ012345678') for _ in range(10)])
 
 
-for _ in range(64):
+for _ in range(32):
     patch = gen_fake_patch_id()
 
     os.mkdir(f"../data/imgs/fake_data2/{patch}")
