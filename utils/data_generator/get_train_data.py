@@ -121,6 +121,9 @@ def extract_and_save_patch_names():
 
 
 def save_all_patches():
+    """
+    Save all patches, converted to .npy, in a new file structure
+    """
     with open(osp.join(osp.dirname(data.__file__), 'patch_names'), newline='') as f:
         reader = csv.reader(f)
         patch_name_data = list(reader)
