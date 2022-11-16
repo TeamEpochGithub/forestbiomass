@@ -52,7 +52,7 @@ def upload_local_directory_to_gcs(path: str, bucket, gcs_path: str):
         if not os.path.isfile(local_file):
             upload_local_directory_to_gcs(local_file, bucket, gcs_path + "/" + os.path.basename(local_file))
         else:
-            remote_path = os.path.join(gcs_path, local_file[1 + len(path):])
+            remote_path = gcs_path + "/" + local_file[1 + len(path):]
             blob = bucket.blob(remote_path)
             blob.upload_from_filename(local_file)
 
@@ -83,4 +83,4 @@ if __name__ == "__main__":
 
     bucket = storage_client.bucket('forest-biomass')
 
-    # upload_local_directory_to_gcs(r"C:\Users\Team Epoch A\Desktop\forest-biomass", bucket, '')
+    upload_local_directory_to_gcs(r"C:\Users\Team Epoch A\Desktop\forest-biomass", bucket, 'forest')
