@@ -107,5 +107,5 @@ class LocalDataGenerator(tf.keras.utils.Sequence):
 
 if __name__ == "__main__":
     datagen = LocalDataGenerator(train_abgm_path)
-    x, y = datagen[0]
+    x, y = datagen[1]
     # print(x.shape)
