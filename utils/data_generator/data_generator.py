@@ -34,6 +34,10 @@ def authenticate_remote():
 def _item_to_value(iterator, item):
     return item
 def list_directories(bucket_name, prefix):
+    """
+    Method to list subdirectories GCS, in this case all the patches
+    :return: List of all the paths to the patches
+    """
     if prefix and not prefix.endswith('/'):
         prefix += '/'
 
@@ -68,10 +72,8 @@ class DataGenerator():
             - This saves work, because we will be fetching batches multiple times (across epochs)
         """
         # Get all filenames in directory
-
         self.filenames = list_directories('forest-biomass', 'forest')
-        print(self.filenames)
-        print(len(self.filenames))
+
         # Include batch size as attribute
         self.batch_size = batch_size
 
@@ -90,46 +92,54 @@ class DataGenerator():
 
         # Get filenames for X batch
         batch_filenames = self.filenames[idx * self.batch_size:(idx + 1) * self.batch_size]
-        print(batch_filenames)
+
         label_blobs = []
+        # For every filename in batch read the label.npy
         for file in batch_filenames:
             label = bucket.blob(f'{file}label.npy')
             label = BytesIO(label.download_as_string())
             label_blobs.append(label)
 
         try:
+            # Load and stack all the label files from all patches together
             batch_y = np.stack([np.load(label, allow_pickle=True) for label in label_blobs], axis=0)
             print(batch_y.shape)
         except:
             print(f"something wrong with label")
 
         # concatenating all the months together and then stacking on each other for both s1 and s2 separate
-
+        # List for all the patches together, to be processed to batch
         batch_s1_array = []
         batch_s2_array = []
         for file in batch_filenames:
+            # List for all the data in one patch
             s1_blobs = []
             s2_blobs = []
             for month in range(12):
+                # List all npy files for S1 and S2 separate per month
                 s1_blobs_per_month = storage_client.list_blobs("forest-biomass", prefix=f'{file}{month}/S1')
                 s2_blobs_per_month = storage_client.list_blobs("forest-biomass", prefix=f'{file}{month}/S2')
 
+                # Proces data in blob to use np.load and append the whole month together in s1_blobs
                 s1_temp = []
                 for s1_blob in s1_blobs_per_month:
                     s1_blob = BytesIO(s1_blob.download_as_string())
                     s1_temp.append(np.load(s1_blob))
                 s1_blobs.append(s1_temp)
 
+                # Proces data in blob to use np.load and append the whole month together in s2_blobs
                 s2_temp = []
                 for s2_blob in s2_blobs_per_month:
                     s2_blob = BytesIO(s2_blob.download_as_string())
                     s2_temp.append(np.load(s2_blob, allow_pickle=True))
                 s2_blobs.append(s2_temp)
 
+            # Concatenate all the months of one patch together and append it to the batch array
             batch_s2_array.append(np.concatenate(s2_blobs))
             batch_s1_array.append(np.concatenate(s1_blobs))
 
         try:
+            # Stack all the patches on top of each other to create batch
             batch_x_s1 = np.stack([bs1 for bs1 in batch_s1_array])
             batch_x_s2 = np.stack([bs2 for bs2 in batch_s2_array])
 
