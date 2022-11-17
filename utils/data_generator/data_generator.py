@@ -63,7 +63,7 @@ def list_directories(bucket_name, prefix):
     return [x for x in iterator]
 
 class DataGenerator():
-    def __init__(self, batch_size=1):
+    def __init__(self, batch_size=2):
         """
         Few things to mention:
             - The data generator tells our model how to fetch one batch of training data (in this case from files)
@@ -98,28 +98,39 @@ class DataGenerator():
         for file in batch_filenames:
             label = bucket.blob(f'{file}label.npy')
             label = BytesIO(label.download_as_string())
-            label_blobs.append(label)
+            l = np.load(label, allow_pickle=True)
 
-        try:
-            # Load and stack all the label files from all patches together
-            batch_y = np.stack([np.load(label, allow_pickle=True) for label in label_blobs], axis=0)
-            print(batch_y.shape)
-        except:
-            print(f"something wrong with label")
+            # Check if label.npy is corrupted or missing and remove if so
+            if not l.any():
+                batch_filenames.remove(file)
+                continue
+            label_blobs.append(l)
+
+        batch_y = np.stack([label for label in label_blobs], axis=0)
+        # try:
+        #     # Load and stack all the label files from all patches together
+        #     batch_y = np.stack([np.load(l) for label in label_blobs], axis=0)
+        # except:
+        #     print(f"something wrong with label")
 
         # concatenating all the months together and then stacking on each other for both s1 and s2 separate
         # List for all the patches together, to be processed to batch
         batch_s1_array = []
         batch_s2_array = []
+
+        # Array for missing data. 0 means all data is present and 1 means missing data
+        missing_data_s2 = []
         for file in batch_filenames:
             # List for all the data in one patch
             s1_blobs = []
             s2_blobs = []
+            # Missing data per patch
+            missing_data_patch_s2 = []
             for month in range(12):
+                missing = 0
                 # List all npy files for S1 and S2 separate per month
                 s1_blobs_per_month = storage_client.list_blobs("forest-biomass", prefix=f'{file}{month}/S1')
                 s2_blobs_per_month = storage_client.list_blobs("forest-biomass", prefix=f'{file}{month}/S2')
-
                 # Proces data in blob to use np.load and append the whole month together in s1_blobs
                 s1_temp = []
                 for s1_blob in s1_blobs_per_month:
@@ -129,14 +140,27 @@ class DataGenerator():
 
                 # Proces data in blob to use np.load and append the whole month together in s2_blobs
                 s2_temp = []
+                count = 0
                 for s2_blob in s2_blobs_per_month:
+                    count += 1
                     s2_blob = BytesIO(s2_blob.download_as_string())
-                    s2_temp.append(np.load(s2_blob, allow_pickle=True))
+                    s2_temp.append(np.load(s2_blob))
+
+                if count == 0: # No blobs in S2
+                    missing = 1
+                    for band in range(11):
+                        fake_array_s2 = np.zeros((256, 256), dtype='uint16')
+                        s2_temp.append(fake_array_s2)
                 s2_blobs.append(s2_temp)
+                # Append information if data is missing or not
+                missing_data_patch_s2.append(missing)
 
             # Concatenate all the months of one patch together and append it to the batch array
             batch_s2_array.append(np.concatenate(s2_blobs))
             batch_s1_array.append(np.concatenate(s1_blobs))
+
+            # Append missing data per patch
+            missing_data_s2.append(missing_data_patch_s2)
 
         try:
             # Stack all the patches on top of each other to create batch
@@ -160,5 +184,5 @@ if __name__ == "__main__":
 
 
     datagen = DataGenerator()
-    x, y = datagen[8]
+    x, y = datagen[0]
     # print(x.shape)
