@@ -63,7 +63,7 @@ def list_directories(bucket_name, prefix):
     return [x for x in iterator]
 
 class DataGenerator():
-    def __init__(self, batch_size=2):
+    def __init__(self, batch_size=16):
         """
         Few things to mention:
             - The data generator tells our model how to fetch one batch of training data (in this case from files)
@@ -87,9 +87,10 @@ class DataGenerator():
         """
         Tells generator how to retrieve BATCH idx
         """
+
         storage_client = storage.Client()
         bucket = storage_client.bucket("forest-biomass")
-
+        print("Bucket ready")
         # Get filenames for X batch
         batch_filenames = self.filenames[idx * self.batch_size:(idx + 1) * self.batch_size]
 
@@ -107,11 +108,6 @@ class DataGenerator():
             label_blobs.append(l)
 
         batch_y = np.stack([label for label in label_blobs], axis=0)
-        # try:
-        #     # Load and stack all the label files from all patches together
-        #     batch_y = np.stack([np.load(l) for label in label_blobs], axis=0)
-        # except:
-        #     print(f"something wrong with label")
 
         # concatenating all the months together and then stacking on each other for both s1 and s2 separate
         # List for all the patches together, to be processed to batch
@@ -162,27 +158,23 @@ class DataGenerator():
             # Append missing data per patch
             missing_data_s2.append(missing_data_patch_s2)
 
-        try:
-            # Stack all the patches on top of each other to create batch
-            batch_x_s1 = np.stack([bs1 for bs1 in batch_s1_array])
-            batch_x_s2 = np.stack([bs2 for bs2 in batch_s2_array])
+        # Stack all the patches on top of each other to create batch
+        batch_x_s1 = np.stack([bs1 for bs1 in batch_s1_array])
+        batch_x_s2 = np.stack([bs2 for bs2 in batch_s2_array])
 
-        except:
-            print('missing data in there')
         # Return X, where X is made of loaded np arrays from the filenames
         # Shape s1 is batch_size x 48 x 256 x 256 x 1 (all training arrays concatenated)
         # Shape s2 is batch_size x 132 x 256 x 256 x 1 (all training arrays concatenated)
         # Directories divided in patches. Patches consist of 12 arrays for each month,
         # that for s1 contains 4 arrays and s2 11 arrays with format 256 x 256
-
-        return (batch_x_s1, batch_x_s2), batch_y
+        print('End')
+        return (batch_x_s1, batch_x_s2), missing_data_s2, batch_y
 
 if __name__ == "__main__":
     authenticate_remote()
 
     path = "gs://forest-biomass/forest"
 
-
     datagen = DataGenerator()
     x, y = datagen[0]
-    # print(x.shape)
+    print(x[0].shape, x[1].shape)
