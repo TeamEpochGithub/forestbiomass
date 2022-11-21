@@ -1,2 +1,7 @@
 google-cloud-storage
 google~=3.0.0
+tensorflow
+keras
+numpy
+pandas
+git+https://github.com/qubvel/classification_models.git
