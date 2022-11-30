@@ -8,6 +8,7 @@ import data
 import csv
 from sklearn.model_selection import train_test_split
 
+from models.utils.get_test_data import get_data_for_test
 from models.utils.root_mean_squared_error import root_mean_squared_error
 
 
@@ -52,10 +53,20 @@ class PatchEncoder(layers.Layer):
         return encoded
 
 
-def create_vit_model(input_shape, data_augmentation, patch_size, num_patches, projection_dim, transformer_layers,
+def create_vit_model(input_shape, x_train, patch_size, num_patches, projection_dim, transformer_layers,
                      num_heads, transformer_units, mlp_head_units, learning_rate, weight_decay):
     inputs = layers.Input(shape=input_shape)
     # Augment data.
+
+    data_augmentation = keras.Sequential(
+        [
+            layers.Normalization(),
+        ],
+        name="data_augmentation",
+    )
+    # Compute the mean and the variance of the training data for normalization.
+    data_augmentation.layers[0].adapt(x_train)
+
     augmented = data_augmentation(inputs)
     # Create patches.
     patches = Patches(patch_size)(augmented)
@@ -131,9 +142,9 @@ def fit_vit_model(model, x_train, y_train, batch_size, num_epochs, validation_sp
     return model
 
 
-def get_trained_model(input_shape, data_augmentation, patch_size, num_patches, projection_dim, transformer_layers,
+def get_trained_model(input_shape, x_train, patch_size, num_patches, projection_dim, transformer_layers,
                       num_heads, transformer_units, mlp_head_units, learning_rate, weight_decay):
-    model = create_vit_model(input_shape, data_augmentation, patch_size, num_patches, projection_dim,
+    model = create_vit_model(input_shape, x_train, patch_size, num_patches, projection_dim,
                              transformer_layers,
                              num_heads, transformer_units, mlp_head_units, learning_rate, weight_decay)
     model.load_weights("./vit_checkpoints/checkpoint")
@@ -146,36 +157,6 @@ def evaluate_vit_model(model, x_test, y_test, use_checkpoint=False):
 
     _, mse, rmse = model.evaluate(x_test, y_test)
     return mse, rmse
-
-
-def get_data_for_test(patch_names, train_data_path):
-    X_all = []
-    y_all = []
-    c = 0
-    for patch in patch_names:
-        label_path = osp.join(train_data_path, patch, "label.npy")
-
-        try:
-            label = np.load(label_path, allow_pickle=True)
-            if label.shape == ():
-                continue
-        except IOError as e:
-            continue
-
-        month_data = []
-        for month in range(0, 12):
-            month_patch_path = osp.join(train_data_path, patch, str(month), "S2",
-                                        "1.npy")  # 1 is the green band, out of the 11 bands
-
-            try:
-                month_patch = np.load(month_patch_path, allow_pickle=True)
-                month_data.append(month_patch)
-            except IOError as e:
-                continue
-        if len(month_data) >= 1:
-            X_all.append(np.average(month_data, axis=0))
-            y_all.append(label)
-    return np.array(X_all), np.array(y_all)
 
 
 if __name__ == '__main__':
@@ -208,22 +189,12 @@ if __name__ == '__main__':
     x_train, x_test, y_train, y_test = train_test_split(X_all, y_all, test_size=0.2, random_state=42)
     x_train = x_train.reshape(x_train.shape[0], 256, 256, 1)
     x_test = x_test.reshape(x_test.shape[0], 256, 256, 1)
-    print("Done!")
 
     print(f"x_train shape: {x_train.shape} - y_train shape: {y_train.shape}")
     print(f"x_test shape: {x_test.shape} - y_test shape: {y_test.shape}")
 
-    data_augmentation = keras.Sequential(
-        [
-            layers.Normalization(),
-        ],
-        name="data_augmentation",
-    )
-    # Compute the mean and the variance of the training data for normalization.
-    data_augmentation.layers[0].adapt(x_train)
-
     model = create_vit_model(input_shape=input_shape,
-                             data_augmentation=data_augmentation,
+                             x_train=x_train,
                              patch_size=patch_size,
                              num_patches=num_patches,
                              projection_dim=projection_dim,
@@ -240,7 +211,7 @@ if __name__ == '__main__':
     print(f"MSE: {round(mse, 2)} and RMSE: {round(rmse, 2)}")
 
     pretrained_model = get_trained_model(input_shape=input_shape,
-                                         data_augmentation=data_augmentation,
+                                         x_train=x_train,
                                          patch_size=patch_size,
                                          num_patches=num_patches,
                                          projection_dim=projection_dim,
