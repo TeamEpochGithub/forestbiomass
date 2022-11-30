@@ -3,6 +3,7 @@ import os.path as osp
 
 
 def get_data_for_test(patch_names, train_data_path):
+
     X_all = []
     y_all = []
 
