@@ -109,7 +109,7 @@ def create_vit_model(input_shape, data_augmentation, patch_size, num_patches, pr
 
 def fit_vit_model(model, x_train, y_train, batch_size, num_epochs, validation_split, save_checkpoint=False):
     if save_checkpoint:
-        checkpoint_filepath = "./tmp/vit_checkpoint"
+        checkpoint_filepath = "./vit_checkpoints/checkpoint"
         checkpoint_callback = keras.callbacks.ModelCheckpoint(
             checkpoint_filepath,
             monitor="RMSE",
@@ -128,13 +128,21 @@ def fit_vit_model(model, x_train, y_train, batch_size, num_epochs, validation_sp
         callbacks=[checkpoint_callback],
     )
 
+    return model
 
+
+def get_trained_model(input_shape, data_augmentation, patch_size, num_patches, projection_dim, transformer_layers,
+                      num_heads, transformer_units, mlp_head_units, learning_rate, weight_decay):
+    model = create_vit_model(input_shape, data_augmentation, patch_size, num_patches, projection_dim,
+                             transformer_layers,
+                             num_heads, transformer_units, mlp_head_units, learning_rate, weight_decay)
+    model.load_weights("./vit_checkpoints/checkpoint")
     return model
 
 
 def evaluate_vit_model(model, x_test, y_test, use_checkpoint=False):
     if use_checkpoint:
-        model.load_weights("./tmp/vit_checkpoint")
+        model.load_weights("./vit_checkpoints/checkpoint")
 
     _, mse, rmse = model.evaluate(x_test, y_test)
     return mse, rmse
@@ -175,7 +183,7 @@ if __name__ == '__main__':
     weight_decay = 0.0001
     input_shape = (256, 256, 1)
     batch_size = 16  # 256
-    num_epochs = 100
+    num_epochs = 3
     image_size = 256  # 72  # We'll resize input images to this size
     patch_size = 16  # 6  # Size of the patches to be extract from the input images
     num_patches = (image_size // patch_size) ** 2
@@ -226,6 +234,22 @@ if __name__ == '__main__':
                              learning_rate=learning_rate,
                              weight_decay=weight_decay)
 
-    fitted_model = fit_vit_model(model=model, x_train=x_train, y_train=y_train, batch_size=batch_size, num_epochs=num_epochs, validation_split=0.1, save_checkpoint=True)
+    fitted_model = fit_vit_model(model=model, x_train=x_train, y_train=y_train, batch_size=batch_size,
+                                 num_epochs=num_epochs, validation_split=0.1, save_checkpoint=True)
     mse, rmse = evaluate_vit_model(model=fitted_model, x_test=x_test, y_test=y_test, use_checkpoint=False)
+    print(f"MSE: {round(mse, 2)} and RMSE: {round(rmse, 2)}")
+
+    pretrained_model = get_trained_model(input_shape=input_shape,
+                                         data_augmentation=data_augmentation,
+                                         patch_size=patch_size,
+                                         num_patches=num_patches,
+                                         projection_dim=projection_dim,
+                                         transformer_layers=transformer_layers,
+                                         num_heads=num_heads,
+                                         transformer_units=transformer_units,
+                                         mlp_head_units=mlp_head_units,
+                                         learning_rate=learning_rate,
+                                         weight_decay=weight_decay)
+
+    mse, rmse = evaluate_vit_model(model=pretrained_model, x_test=x_test, y_test=y_test, use_checkpoint=False)
     print(f"MSE: {round(mse, 2)} and RMSE: {round(rmse, 2)}")
