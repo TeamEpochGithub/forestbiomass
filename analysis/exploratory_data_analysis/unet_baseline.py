@@ -175,7 +175,7 @@ def train():
     )
 
     trained_weights_path = osp.abspath(
-        osp.join(osp.realpath('__file__'), "../../../data/pre-trained_weights/resnet50-sentinel2(1).pt"))
+        osp.join(osp.realpath('__file__'), "../../../data/pre-trained_weights/resnet50.pt"))
     base_model.encoder.load_state_dict(torch.load(trained_weights_path))
     s2_model = Sentinel2Model(base_model)
 
