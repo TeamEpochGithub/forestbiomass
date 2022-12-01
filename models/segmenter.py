@@ -1,6 +1,7 @@
 import sys
 
 import torch
+from matplotlib import pyplot as plt
 from torch.utils.data import Dataset, DataLoader
 import torch.nn.functional as F
 import segmentation_models_pytorch as smp
@@ -179,6 +180,8 @@ def select_segmenter(segmenter_name, encoder_name, number_of_channels):
 
 def create_tensor(band_list):
 
+    band_list = np.asarray(band_list, dtype=np.float32)
+
     band_tensor = torch.tensor(band_list)
     band_tensor = (band_tensor.permute(1, 2, 0) - band_tensor.mean(dim=(1, 2))) / (band_tensor.std(dim=(1, 2)) + 0.01)
     band_tensor = band_tensor.permute(2, 0, 1)
@@ -269,5 +272,18 @@ def load_model(segmenter_name, encoder_name, number_of_channels, version=None):
     return s2_model
 
 if __name__ == '__main__':
-    train("Unet", "resnet50", 2, 0.8)
-    #load_model("Unet", "resnet50", 10)
+    model = load_model("Unet", "resnet50", 10)
+
+    example_path = osp.join(osp.dirname(data.__file__), "forest-biomass", "2d977c85", "0", "S2")
+
+    collected_bands = []
+
+    for i in range(0, 10):
+        collected_bands.append(np.load(osp.join(example_path, f"{i}.npy"), allow_pickle=True))
+
+    model_input = create_tensor(collected_bands)
+
+    prediction = model(model_input)
+
+    plt.imshow(prediction.cpu().squeeze().detach().numpy(), interpolation='nearest')
+    plt.show()
