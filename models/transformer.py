@@ -132,7 +132,7 @@ def fit_vit_model(model, x_train, y_train, batch_size, num_epochs, validation_sp
 
     model.fit(
         x=x_train,
-        y=y_train,
+        y=y_train.clip(min=0, max=300),
         batch_size=batch_size,
         epochs=num_epochs,
         validation_split=validation_split,
@@ -206,7 +206,7 @@ if __name__ == '__main__':
                              weight_decay=weight_decay)
 
     fitted_model = fit_vit_model(model=model, x_train=x_train, y_train=y_train, batch_size=batch_size,
-                                 num_epochs=num_epochs, validation_split=0.1, save_checkpoint=True)
+                                 num_epochs=num_epochs, validation_split=0.1, save_checkpoint=False)
     mse, rmse = evaluate_vit_model(model=fitted_model, x_test=x_test, y_test=y_test, use_checkpoint=False)
     print(f"MSE: {round(mse, 2)} and RMSE: {round(rmse, 2)}")
 

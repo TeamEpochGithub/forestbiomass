@@ -33,15 +33,15 @@ def get_worst_predictions_from_model(model, n=10) -> list:
         patch_name_data = list(reader)
     patch_names = patch_name_data[0]
 
-    X_all, y_all = get_data_for_test(patch_names, train_data_path)
+    X_all, y_all, selected_patch_names = get_data_for_test(patch_names, train_data_path)
     X_all = X_all.reshape(X_all.shape[0], 256, 256, 1)
     # x_test = x_test.reshape(x_test.shape[0], 256, 256, 1)
 
     pred_label_score = []
     for ind, patch in enumerate(X_all):
         label = y_all[ind]
-        pred = model.predict(np.array([patch, ]))[0]
-        pred_label_score.append((pred, label, root_mean_squared_error(y_true=pred, y_pred=label)))
+        pred = model.predict(np.array([patch.clip(min=0, max=300), ]))[0]
+        pred_label_score.append((pred, label, root_mean_squared_error(y_true=pred, y_pred=label.clip(min=0, max=300)), selected_patch_names[ind]))
 
     worst = sorted(pred_label_score, key=lambda x: x[2], reverse=True)
 
