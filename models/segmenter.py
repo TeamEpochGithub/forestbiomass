@@ -3,7 +3,6 @@ import sys
 import torch
 from torch.utils.data import Dataset, DataLoader
 import torch.nn.functional as F
-import pandas as pd
 import segmentation_models_pytorch as smp
 import os
 import rasterio
@@ -11,16 +10,13 @@ from pytorch_lightning import Trainer
 import pytorch_lightning as pl
 import warnings
 import numpy as np
-from matplotlib import pyplot as plt
-from PIL import Image
-from tqdm.notebook import tqdm
 import os.path as osp
 from pytorch_lightning.loggers import TensorBoardLogger
 import data
 import csv
-from sklearn.model_selection import train_test_split
 
 warnings.filterwarnings("ignore", category=rasterio.errors.NotGeoreferencedWarning)
+
 
 class Segmentation_Dataset_Maker(Dataset):
     def __init__(self, tensor_list, transform=None):
@@ -146,7 +142,34 @@ def prepare_dataset(chip_ids, train_data_path):
     new_dataset = Segmentation_Dataset_Maker(available_tensors)
     return new_dataset, number_of_channels
 
-def train(encoder_name, epochs, validation_fraction, batch_size=32, pre_trained_weights=False):
+
+def select_segmenter(segmenter_name, encoder_name, number_of_channels):
+
+    if segmenter_name == "Unet":
+
+        base_model = smp.Unet(
+            encoder_name=encoder_name,
+            in_channels=number_of_channels,
+            classes=1
+        )
+    else:
+        base_model = None
+
+    assert base_model is not None, "Segmenter name was not recognized."
+
+    return base_model
+
+
+def create_tensor(band_list):
+
+    band_tensor = torch.tensor(band_list)
+    band_tensor = (band_tensor.permute(1, 2, 0) - band_tensor.mean(dim=(1, 2))) / (band_tensor.std(dim=(1, 2)) + 0.01)
+    band_tensor = band_tensor.permute(2, 0, 1)
+
+    return band_tensor.unsqueeze(0)
+
+
+def train(segmenter_name, encoder_name, epochs, validation_fraction, batch_size=32):
 
     print("Getting train data...")
     train_data_path = osp.join(osp.dirname(data.__file__), "forest-biomass")
@@ -165,20 +188,21 @@ def train(encoder_name, epochs, validation_fraction, batch_size=32, pre_trained_
     train_dataloader = DataLoader(train_set, batch_size=batch_size, shuffle=True, num_workers=6)
     valid_dataloader = DataLoader(val_set, batch_size=batch_size, shuffle=False, num_workers=6)
 
-    base_model = smp.Unet(
-        encoder_name=encoder_name,
-        in_channels=number_of_channels,
-        classes=1,
-    )
+    base_model = select_segmenter(segmenter_name, encoder_name, number_of_channels)
 
-    if pre_trained_weights:
+    pre_trained_weights_dir_path = osp.join(osp.dirname(data.__file__), "pre-trained_weights")
 
-        trained_weights_path = osp.join(osp.dirname(data.__file__), "pre-trained_weights", f"{encoder_name}.pt")
-        base_model.encoder.load_state_dict(torch.load(trained_weights_path))
+    if osp.exists(osp.join(pre_trained_weights_dir_path, f"{encoder_name}.pt")):
+        pre_trained_weights_path = osp.join(pre_trained_weights_dir_path, f"{encoder_name}.pt")
+    else:
+        pre_trained_weights_path = None
+
+    if pre_trained_weights_path is not None:
+        base_model.encoder.load_state_dict(torch.load(pre_trained_weights_path))
 
     s2_model = Sentinel2Model(base_model)
 
-    logger = TensorBoardLogger("tb_logs", name="SMP_model")
+    logger = TensorBoardLogger("tb_logs", name=f"{segmenter_name}_{encoder_name}")
 
     trainer = Trainer(
         accelerator="gpu",
@@ -191,44 +215,40 @@ def train(encoder_name, epochs, validation_fraction, batch_size=32, pre_trained_
 
     return s2_model
 
-# def predict():
-#
-#     available = os.listdir(test_dataset)
-#     chip_ids = set([x[0:8] for x in available])
-#
-#     test_image_paths = [os.path.join(test_dataset, x + "_S2_06.tif") for x in chip_ids]
-#
-#     for chip_id in tqdm(chip_ids):
-#         image_path = os.path.join(test_dataset, f"{chip_id}_S2_06.tif")
-#
-#         test_im = torch.tensor(rasterio.open(image_path).read().astype(np.float32)[:10])
-#         test_im = (test_im.permute(1, 2, 0) - test_im.mean(dim=(1, 2))) / (test_im.std(dim=(1, 2)) + 0.01)
-#         test_im = test_im.permute(2, 0, 1)
-#         pred = s2_model(test_im.unsqueeze(0))
-#
-#         im = Image.fromarray(pred.squeeze().cpu().detach().numpy())
-#         im.save(f"preds/{chip_id}_agbm.tif", format="TIFF", save_all=True)
-#
-#     ## A quick visualization
-#
-#     # Load data
-#     test_im = torch.tensor(rasterio.open("../train_features/29cc01ea_S2_06.tif").read().astype(np.float32)[:10])
-#     test_label = torch.tensor(rasterio.open("../train_agbm/29cc01ea_agbm.tif").read().astype(np.float32)[:10])
-#
-#     # Normalize
-#     test_im = (test_im.permute(1, 2, 0) - test_im.mean(dim=(1, 2))) / (test_im.std(dim=(1, 2)) + 0.01)
-#     test_im = test_im.permute(2, 0, 1)
-#
-#     # Show ground truth
-#     plt.imshow(test_label.permute(1, 2, 0).numpy(), interpolation='nearest')
-#     plt.show()
-#
-#     # Predict
-#     pred = s2_model(test_im.unsqueeze(0))
-#
-#     # Show predictions
-#     plt.imshow(pred.cpu().squeeze().detach().numpy(), interpolation='nearest')
-#     plt.show()
+def load_model(segmenter_name, encoder_name, number_of_channels, version=None):
+
+    print("Getting saved model...")
+    log_folder_path = osp.join(osp.dirname(data.__file__), "tb_logs", f"{segmenter_name}_{encoder_name}")
+
+    if version is None:
+        version_dir = list(os.scandir(log_folder_path))[-1]
+    else:
+        version_dir = list(os.scandir(log_folder_path))[version]
+
+    checkpoint_dir_path = osp.join(log_folder_path, version_dir, "checkpoints")
+
+    latest_checkpoint_name = list(os.scandir(checkpoint_dir_path))[-1]
+
+    latest_checkpoint_path = osp.join(checkpoint_dir_path, latest_checkpoint_name)
+
+    base_model = select_segmenter(segmenter_name, encoder_name, number_of_channels)
+
+    pre_trained_weights_dir_path = osp.join(osp.dirname(data.__file__), "pre-trained_weights")
+
+    if osp.exists(osp.join(pre_trained_weights_dir_path, f"{encoder_name}.pt")):
+        pre_trained_weights_path = osp.join(pre_trained_weights_dir_path, f"{encoder_name}.pt")
+    else:
+        pre_trained_weights_path = None
+
+    if pre_trained_weights_path is not None:
+        base_model.encoder.load_state_dict(torch.load(pre_trained_weights_path))
+
+    s2_model = Sentinel2Model(base_model)
+
+    checkpoint = torch.load(latest_checkpoint_path)
+    s2_model.load_state_dict(checkpoint["state_dict"])
+
+    return s2_model
 
 if __name__ == '__main__':
-    train()
+    load_model("Unet", "resnet50", 10)

@@ -179,7 +179,7 @@ def train():
     base_model.encoder.load_state_dict(torch.load(trained_weights_path))
     s2_model = Sentinel2Model(base_model)
 
-    logger = TensorBoardLogger("tb_logs", name="SMP_model")
+    logger = TensorBoardLogger("../../data/tb_logs", name="Unet_resnet50")
 
     trainer = Trainer(
         accelerator="gpu",
