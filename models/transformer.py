@@ -8,7 +8,7 @@ import data
 import csv
 from sklearn.model_selection import train_test_split
 
-from models.utils.get_test_data import get_data_for_test
+from models.utils.get_test_data import get_average_green_band_data
 from models.utils.root_mean_squared_error import root_mean_squared_error
 
 
@@ -184,7 +184,7 @@ if __name__ == '__main__':
         patch_name_data = list(reader)
     patch_names = patch_name_data[0]
 
-    X_all, y_all = get_data_for_test(patch_names, train_data_path)
+    X_all, y_all = get_average_green_band_data(patch_names, train_data_path)
 
     x_train, x_test, y_train, y_test = train_test_split(X_all, y_all, test_size=0.2, random_state=42)
     x_train = x_train.reshape(x_train.shape[0], 256, 256, 1)
