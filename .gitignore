@@ -2,6 +2,7 @@
 data/imgs
 data/converted
 data/forest-biomass
+models/vit_checkpoints
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
