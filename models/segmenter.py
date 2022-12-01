@@ -31,6 +31,22 @@ class Segmentation_Dataset_Maker(Dataset):
 
         data_tensor, label_tensor = self.tensor_list[idx]
 
+        # print("###################################")
+        #
+        # print(len(data_tensor))
+        # print(data_tensor)
+        #
+        # print("-----------------------------------")
+        #
+        # print(len(label_tensor))
+        # print(label_tensor)
+        #
+        # print("###################################")
+        #
+        # sys.exit()
+        #
+        # sys.exit()
+
         if self.transform:
             data_tensor = self.transform(data_tensor)
 
@@ -104,7 +120,7 @@ def prepare_dataset(chip_ids, train_data_path):
         except IOError as e:
             continue
 
-        label_tensor = torch.tensor(label)
+        label_tensor = torch.tensor(np.asarray([label], dtype=np.float32))
 
         for month in range(0, 12):
 
@@ -127,7 +143,7 @@ def prepare_dataset(chip_ids, train_data_path):
                         band = np.load(osp.join(month_patch_path, "S2", f"{index}.npy"), allow_pickle=True)
                         arr_list.append(band)
 
-                data_tensor = torch.tensor(arr_list)
+                data_tensor = torch.tensor(np.asarray(arr_list, dtype=np.float32))
 
                 # These operations were present in the original notebook. I'll figure out some other time what they do.
                 # By some other time I mean never.
@@ -152,6 +168,7 @@ def select_segmenter(segmenter_name, encoder_name, number_of_channels):
             in_channels=number_of_channels,
             classes=1
         )
+
     else:
         base_model = None
 
@@ -169,7 +186,7 @@ def create_tensor(band_list):
     return band_tensor.unsqueeze(0)
 
 
-def train(segmenter_name, encoder_name, epochs, validation_fraction, batch_size=32):
+def train(segmenter_name, encoder_name, epochs, training_fraction, batch_size=32):
 
     print("Getting train data...")
     train_data_path = osp.join(osp.dirname(data.__file__), "forest-biomass")
@@ -180,7 +197,7 @@ def train(segmenter_name, encoder_name, epochs, validation_fraction, batch_size=
 
     train_dataset, number_of_channels = prepare_dataset(patch_names, train_data_path)
 
-    train_size = int(validation_fraction * len(train_dataset))
+    train_size = int(training_fraction * len(train_dataset))
     valid_size = len(train_dataset) - train_size
 
     train_set, val_set = torch.utils.data.random_split(train_dataset, [train_size, valid_size])
@@ -205,10 +222,11 @@ def train(segmenter_name, encoder_name, epochs, validation_fraction, batch_size=
     logger = TensorBoardLogger("tb_logs", name=f"{segmenter_name}_{encoder_name}")
 
     trainer = Trainer(
-        accelerator="gpu",
+        accelerator="cpu",
         devices=1,
         max_epochs=epochs,
         logger=[logger],
+        log_every_n_steps=5
     )
     # Train the model ⚡
     trainer.fit(s2_model, train_dataloaders=train_dataloader, val_dataloaders=valid_dataloader)
@@ -251,4 +269,5 @@ def load_model(segmenter_name, encoder_name, number_of_channels, version=None):
     return s2_model
 
 if __name__ == '__main__':
-    load_model("Unet", "resnet50", 10)
+    train("Unet", "resnet50", 2, 0.8)
+    #load_model("Unet", "resnet50", 10)

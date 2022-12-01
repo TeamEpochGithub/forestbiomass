@@ -82,6 +82,20 @@ class SentinelDatasetAlternative(Dataset):
         if self.transform:
             image = self.transform(image)
 
+        print("###################################")
+
+        print(len(image))
+        print(image)
+
+        print("-----------------------------------")
+
+        print(len(label))
+        print(label)
+
+        print("###################################")
+
+        sys.exit()
+
         return image, label
 
 
@@ -182,7 +196,7 @@ def train():
     logger = TensorBoardLogger("../../data/tb_logs", name="Unet_resnet50")
 
     trainer = Trainer(
-        accelerator="gpu",
+        accelerator="cpu",
         devices=1,
         max_epochs=5,
         logger=[logger],
