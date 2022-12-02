@@ -57,7 +57,7 @@ def get_all_bands(patch_names, train_data_path):
 
             for band in range(0, 11):
                 patch_month_band_path = osp.join(train_data_path, patch, str(month), "S2",
-                                                 f"{band}.npy")  # 1 is the green band, out of the 11 bands
+                                                 f"{band}.npy")
 
                 try:
                     patch_month_band_data = np.load(patch_month_band_path, allow_pickle=True)
