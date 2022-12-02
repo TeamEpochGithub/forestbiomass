@@ -2,7 +2,7 @@ import numpy as np
 import os.path as osp
 
 
-def get_data_for_test(patch_names, train_data_path):
+def get_average_green_band_data(patch_names, train_data_path):
     X_all = []
     y_all = []
     selected_patch_names = []
@@ -32,6 +32,46 @@ def get_data_for_test(patch_names, train_data_path):
             X_all.append(np.average(month_data, axis=0))
             y_all.append(label)
             selected_patch_names.append(patch)
+    return np.array(X_all), np.array(y_all), selected_patch_names
+
+
+def get_all_bands(patch_names, train_data_path):
+    X_all = []
+    y_all = []
+    selected_patch_names = []
+    patch_names = patch_names[0:100]
+
+    for patch in patch_names:
+        label_path = osp.join(train_data_path, patch, "label.npy")
+
+        try:
+            label = np.load(label_path, allow_pickle=True)
+            if label.shape == ():
+                continue
+        except IOError as e:
+            continue
+
+        for month in range(0, 12):
+            month_bands = []
+            month_available = True
+
+            for band in range(0, 11):
+                patch_month_band_path = osp.join(train_data_path, patch, str(month), "S2",
+                                                 f"{band}.npy")
+
+                try:
+                    patch_month_band_data = np.load(patch_month_band_path, allow_pickle=True)
+                    month_bands.append(patch_month_band_data)
+                except IOError as e:
+                    month_available = False
+
+            if not month_available:
+                continue
+
+            X_all.append(np.array(month_bands))
+            y_all.append(label)
+            selected_patch_names.append(patch)
+
     return np.array(X_all), np.array(y_all), selected_patch_names
 
 
