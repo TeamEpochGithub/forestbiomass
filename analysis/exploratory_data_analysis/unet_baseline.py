@@ -82,20 +82,6 @@ class SentinelDatasetAlternative(Dataset):
         if self.transform:
             image = self.transform(image)
 
-        print("###################################")
-
-        print(len(image))
-        print(image)
-
-        print("-----------------------------------")
-
-        print(len(label))
-        print(label)
-
-        print("###################################")
-
-        sys.exit()
-
         return image, label
 
 
