@@ -8,7 +8,7 @@ import data
 import csv
 from sklearn.model_selection import train_test_split
 
-from models.utils.get_test_data import get_average_green_band_data
+from models.utils.get_train_data import get_average_green_band_data
 from models.utils.root_mean_squared_error import root_mean_squared_error
 
 

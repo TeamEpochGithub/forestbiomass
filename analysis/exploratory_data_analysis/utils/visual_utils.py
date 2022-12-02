@@ -5,7 +5,7 @@ from tensorflow.keras import layers
 from matplotlib import pyplot as plt
 
 from models.transformer import create_vit_model, fit_vit_model
-from models.utils.get_test_data import get_average_green_band_data
+from models.utils.get_train_data import get_average_green_band_data
 from models.utils.root_mean_squared_error import root_mean_squared_error
 import os.path as osp
 import csv
