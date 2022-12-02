@@ -203,6 +203,7 @@ def train(segmenter_name, encoder_name, epochs, training_fraction, batch_size=32
         devices=1,
         max_epochs=epochs,
         logger=[logger],
+        log_every_n_steps=5
     )
     # Train the model ⚡
     trainer.fit(s2_model, train_dataloaders=train_dataloader, val_dataloaders=valid_dataloader)
