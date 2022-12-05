@@ -33,7 +33,6 @@ def write_discrete_pixels():
         reader = csv.reader(f)
         patch_name_data = list(reader)
     patch_names = patch_name_data[0]
-    patch_names = patch_names[0:5]
 
     train_data_path = osp.join(osp.dirname(data.__file__), "forest-biomass")
     final_discrete_pixels = []
