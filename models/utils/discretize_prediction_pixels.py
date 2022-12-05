@@ -10,7 +10,12 @@ def discretize_prediction_pixels(prediction):
     """
     Returns a prediction's pixels by closest counterparts in discrete pixel list
     """
-    discrete_pixel_values = get_discrete_pixel_list()
+    # discrete_pixel_values = get_discrete_pixel_list()
+    with open(osp.join(osp.dirname(data.__file__), 'label_discrete_pixels'), newline='') as f:
+        reader = csv.reader(f)
+        discrete_pixel_data = list(reader)
+    discrete_pixel_values = sorted(map(lambda x: float(x), list(set(discrete_pixel_data[0]))))
+
     for row_ind, row in enumerate(prediction):
         for col_ind, col in enumerate(prediction):
             prediction[row_ind][col_ind] = find_nearest(list(discrete_pixel_values), prediction[row_ind][col_ind])
@@ -18,9 +23,41 @@ def discretize_prediction_pixels(prediction):
     return prediction
 
 
+def write_discrete_pixels():
+    """
+    Immediately writes pixels to .csv so that image bands fit in RAM
+    """
+    with open(osp.join(osp.dirname(data.__file__), 'patch_names'), newline='') as f:
+        reader = csv.reader(f)
+        patch_name_data = list(reader)
+    patch_names = patch_name_data[0]
+    patch_names = patch_names[0:5]
+
+    train_data_path = osp.join(osp.dirname(data.__file__), "forest-biomass")
+    final_discrete_pixels = []
+    for patch in patch_names:
+        X_all, y_all, selected_patch_names = get_all_bands([patch], train_data_path)
+
+        with open(osp.join(osp.dirname(data.__file__), 'label_discrete_pixels'), newline='') as f:
+            reader = csv.reader(f)
+            discrete_pixel_data = list(reader)
+        discrete_pixels = set(discrete_pixel_data[0])
+
+        for label in y_all:
+            discrete_pixels.update(set(label.flatten()))
+        final_discrete_pixels = list(discrete_pixels)
+
+        with open(osp.join(osp.dirname(data.__file__), 'label_discrete_pixels'), 'w', newline='') as f:
+            wr = csv.writer(f, quoting=csv.QUOTE_ALL)
+            wr.writerow(list(discrete_pixels))
+
+    return sorted(final_discrete_pixels, key=lambda x: float(x))
+
+
 def get_discrete_pixel_list():
     """
-    Returns list of pixel values found in agbm labels, which turned out to be discrete
+    Returns list of pixel values found in agbm labels, which turned out to be discrete,
+    WARNING: Does not fit in RAM if used on a lot of patches
     """
     train_data_path = osp.join(osp.dirname(data.__file__), "forest-biomass")
     with open(osp.join(osp.dirname(data.__file__), 'patch_names'), newline='') as f:
@@ -45,3 +82,7 @@ def find_nearest(array, value):
         return array[idx - 1]
     else:
         return array[idx]
+
+
+if __name__ == '__main__':
+    print(write_discrete_pixels())
