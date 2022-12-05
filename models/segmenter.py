@@ -19,24 +19,24 @@ import csv
 warnings.filterwarnings("ignore", category=rasterio.errors.NotGeoreferencedWarning)
 
 
-class Segmentation_Dataset_Maker(Dataset):
-    def __init__(self, training_data_path, id_month_list, s1_bands, s2_bands, transform=None):
+class SegmentationDatasetMaker(Dataset):
+    def __init__(self, training_data_path, patch_month_non_missing, s1_bands, s2_bands, transform=None):
         self.training_data_path = training_data_path
-        self.id_month_list = id_month_list
+        self.patch_month_non_missing = patch_month_non_missing
         self.s1_bands = s1_bands
         self.s2_bands = s2_bands
         self.transform = transform
 
     def __len__(self):
-        return len(self.id_month_list)
+        return len(self.patch_month_non_missing)
 
     def __getitem__(self, idx):
 
-        id, month = self.id_month_list[idx]
+        id, month = self.patch_month_non_missing[idx]
 
         label_path = osp.join(self.training_data_path, id, "label.npy")
         label = np.load(label_path, allow_pickle=True)
-        label_tensor = torch.tensor(np.asarray([label], dtype=np.float32))
+        label_tensor = torch.tensor(np.asarray(label, dtype=np.float32))
 
         arr_list = []
 
@@ -88,7 +88,7 @@ class Sentinel2Model(pl.LightningModule):
         return self.model(x)
 
 
-def prepare_dataset(chip_ids, train_data_path):
+def prepare_dataset(patch_names, train_data_path):
     # Change value to 1 to include band during training:
 
     sentinel_1_bands = {
@@ -117,20 +117,23 @@ def prepare_dataset(chip_ids, train_data_path):
 
     number_of_channels = s1_list.count(1) + s2_list.count(1)
 
-    available_tensors = []
+    print("Number of selected channels:", number_of_channels)
 
-    id_month_list = []
+    patch_month_non_missing = []
 
-    for id in chip_ids:
+    for patch in patch_names:
+        all_missing_flag = True
 
         for month in range(0, 12):
-
-            month_patch_path = osp.join(train_data_path, id, str(month))  # 1 is the green band, out of the 11 bands
+            month_patch_path = osp.join(train_data_path, patch, str(month))
 
             if osp.exists(osp.join(month_patch_path, "S2")):
-                id_month_list.append((id, str(month)))
+                patch_month_non_missing.append((patch, str(month)))
+                all_missing_flag = False
+        if all_missing_flag:
+            print("sometimes all are missing!")
 
-    new_dataset = Segmentation_Dataset_Maker(train_data_path, id_month_list, s1_list, s2_list)
+    new_dataset = SegmentationDatasetMaker(train_data_path, patch_month_non_missing, s1_list, s2_list)
     return new_dataset, number_of_channels
 
 
@@ -161,7 +164,7 @@ def create_tensor(band_list):
     return band_tensor.unsqueeze(0)
 
 
-def train(segmenter_name, encoder_name, epochs, training_fraction, batch_size=32):
+def train(segmenter_name, encoder_name, epochs, training_fraction, accelerator="gpu", batch_size=16):
     print("Getting train data...")
     train_data_path = osp.join(osp.dirname(data.__file__), "forest-biomass")
     with open(osp.join(osp.dirname(data.__file__), 'patch_names'), newline='') as f:
@@ -169,39 +172,34 @@ def train(segmenter_name, encoder_name, epochs, training_fraction, batch_size=32
         patch_name_data = list(reader)
     patch_names = patch_name_data[0]
 
-    train_dataset, number_of_channels = prepare_dataset(patch_names, train_data_path)
-
-    train_size = int(training_fraction * len(train_dataset))
-    valid_size = len(train_dataset) - train_size
-
-    train_set, val_set = torch.utils.data.random_split(train_dataset, [train_size, valid_size])
-
-    train_dataloader = DataLoader(train_set, batch_size=batch_size, shuffle=True, num_workers=6)
-    valid_dataloader = DataLoader(val_set, batch_size=batch_size, shuffle=False, num_workers=6)
-
-    base_model = select_segmenter(segmenter_name, encoder_name, number_of_channels)
-
     pre_trained_weights_dir_path = osp.join(osp.dirname(data.__file__), "pre-trained_weights")
-
     if osp.exists(osp.join(pre_trained_weights_dir_path, f"{encoder_name}.pt")):
         pre_trained_weights_path = osp.join(pre_trained_weights_dir_path, f"{encoder_name}.pt")
     else:
         pre_trained_weights_path = None
 
+    train_dataset, number_of_channels = prepare_dataset(patch_names, train_data_path)
+    base_model = select_segmenter(segmenter_name, encoder_name, number_of_channels)
     if pre_trained_weights_path is not None:
         base_model.encoder.load_state_dict(torch.load(pre_trained_weights_path))
-
     s2_model = Sentinel2Model(base_model)
 
-    logger = TensorBoardLogger("tb_logs", name=f"{segmenter_name}_{encoder_name}")
+    train_size = int(training_fraction * len(train_dataset))
+    valid_size = len(train_dataset) - train_size
 
+    train_set, val_set = torch.utils.data.random_split(train_dataset, [train_size, valid_size])
+    train_dataloader = DataLoader(train_set, batch_size=batch_size, shuffle=True, num_workers=24)
+    valid_dataloader = DataLoader(val_set, batch_size=batch_size, shuffle=False, num_workers=24)
+
+    logger = TensorBoardLogger("tb_logs", name=f"{segmenter_name}_{encoder_name}")
     trainer = Trainer(
-        accelerator="cpu",
+        accelerator=accelerator,
         devices=1,
         max_epochs=epochs,
         logger=[logger],
         log_every_n_steps=5
     )
+
     # Train the model ⚡
     trainer.fit(s2_model, train_dataloaders=train_dataloader, val_dataloaders=valid_dataloader)
 
@@ -218,20 +216,16 @@ def load_model(segmenter_name, encoder_name, number_of_channels, version=None):
         version_dir = list(os.scandir(log_folder_path))[version]
 
     checkpoint_dir_path = osp.join(log_folder_path, version_dir, "checkpoints")
-
     latest_checkpoint_name = list(os.scandir(checkpoint_dir_path))[-1]
-
     latest_checkpoint_path = osp.join(checkpoint_dir_path, latest_checkpoint_name)
 
-    base_model = select_segmenter(segmenter_name, encoder_name, number_of_channels)
-
     pre_trained_weights_dir_path = osp.join(osp.dirname(data.__file__), "pre-trained_weights")
-
     if osp.exists(osp.join(pre_trained_weights_dir_path, f"{encoder_name}.pt")):
         pre_trained_weights_path = osp.join(pre_trained_weights_dir_path, f"{encoder_name}.pt")
     else:
         pre_trained_weights_path = None
 
+    base_model = select_segmenter(segmenter_name, encoder_name, number_of_channels)
     if pre_trained_weights_path is not None:
         base_model.encoder.load_state_dict(torch.load(pre_trained_weights_path))
 
@@ -275,4 +269,4 @@ def loading_example():
 
 
 if __name__ == '__main__':
-    train("Unet", "efficientnet-b7", 5, 0.8)
+    train("Unet", "efficientnet-b7", 10, 0.9, "cpu", 16)
