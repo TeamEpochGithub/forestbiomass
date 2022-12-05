@@ -1,3 +1,5 @@
+from collections import Counter
+
 import numpy as np
 from models.utils.get_train_data import get_all_bands
 import os.path as osp
@@ -41,17 +43,19 @@ def write_discrete_pixels():
         with open(osp.join(osp.dirname(data.__file__), 'label_discrete_pixels'), newline='') as f:
             reader = csv.reader(f)
             discrete_pixel_data = list(reader)
-        discrete_pixels = set(discrete_pixel_data[0])
+        discrete_pixels = discrete_pixel_data[0]
+        discrete_pixels = set(map(lambda x: round(float(x), 2), discrete_pixels))
 
         for label in y_all:
-            discrete_pixels.update(set(label.flatten()))
-        final_discrete_pixels = list(discrete_pixels)
+            label_pixels = set(map(lambda x: round(float(x), 2), label.flatten()))
+            discrete_pixels.update(label_pixels)
+        final_discrete_pixels = list(set(discrete_pixels))
 
         with open(osp.join(osp.dirname(data.__file__), 'label_discrete_pixels'), 'w', newline='') as f:
             wr = csv.writer(f, quoting=csv.QUOTE_ALL)
-            wr.writerow(list(discrete_pixels))
+            wr.writerow(list(final_discrete_pixels))
 
-    return sorted(final_discrete_pixels, key=lambda x: float(x))
+    return sorted(final_discrete_pixels)
 
 
 def get_discrete_pixel_list():
@@ -85,4 +89,6 @@ def find_nearest(array, value):
 
 
 if __name__ == '__main__':
-    print(write_discrete_pixels())
+    res = write_discrete_pixels()
+    print(res)
+    print(len(res))
