@@ -8,7 +8,7 @@ import data
 import csv
 from sklearn.model_selection import train_test_split
 
-from models.utils.get_test_data import get_data_for_test
+from models.utils.get_train_data import get_average_green_band_data
 from models.utils.root_mean_squared_error import root_mean_squared_error
 
 
@@ -53,10 +53,20 @@ class PatchEncoder(layers.Layer):
         return encoded
 
 
-def create_vit_model(input_shape, data_augmentation, patch_size, num_patches, projection_dim, transformer_layers,
+def create_vit_model(input_shape, x_train, patch_size, num_patches, projection_dim, transformer_layers,
                      num_heads, transformer_units, mlp_head_units, learning_rate, weight_decay):
     inputs = layers.Input(shape=input_shape)
     # Augment data.
+
+    data_augmentation = keras.Sequential(
+        [
+            layers.Normalization(),
+        ],
+        name="data_augmentation",
+    )
+    # Compute the mean and the variance of the training data for normalization.
+    data_augmentation.layers[0].adapt(x_train)
+
     augmented = data_augmentation(inputs)
     # Create patches.
     patches = Patches(patch_size)(augmented)
@@ -122,7 +132,7 @@ def fit_vit_model(model, x_train, y_train, batch_size, num_epochs, validation_sp
 
     model.fit(
         x=x_train,
-        y=y_train,
+        y=y_train.clip(min=0, max=300),
         batch_size=batch_size,
         epochs=num_epochs,
         validation_split=validation_split,
@@ -132,9 +142,9 @@ def fit_vit_model(model, x_train, y_train, batch_size, num_epochs, validation_sp
     return model
 
 
-def get_trained_model(input_shape, data_augmentation, patch_size, num_patches, projection_dim, transformer_layers,
+def get_trained_model(input_shape, x_train, patch_size, num_patches, projection_dim, transformer_layers,
                       num_heads, transformer_units, mlp_head_units, learning_rate, weight_decay):
-    model = create_vit_model(input_shape, data_augmentation, patch_size, num_patches, projection_dim,
+    model = create_vit_model(input_shape, x_train, patch_size, num_patches, projection_dim,
                              transformer_layers,
                              num_heads, transformer_units, mlp_head_units, learning_rate, weight_decay)
     model.load_weights("./vit_checkpoints/checkpoint")
@@ -147,6 +157,7 @@ def evaluate_vit_model(model, x_test, y_test, use_checkpoint=False):
 
     _, mse, rmse = model.evaluate(x_test, y_test)
     return mse, rmse
+
 
 if __name__ == '__main__':
     learning_rate = 0.001
@@ -173,27 +184,17 @@ if __name__ == '__main__':
         patch_name_data = list(reader)
     patch_names = patch_name_data[0]
 
-    X_all, y_all = get_data_for_test(patch_names, train_data_path)
+    X_all, y_all = get_average_green_band_data(patch_names, train_data_path)
 
     x_train, x_test, y_train, y_test = train_test_split(X_all, y_all, test_size=0.2, random_state=42)
     x_train = x_train.reshape(x_train.shape[0], 256, 256, 1)
     x_test = x_test.reshape(x_test.shape[0], 256, 256, 1)
-    print("Done!")
 
     print(f"x_train shape: {x_train.shape} - y_train shape: {y_train.shape}")
     print(f"x_test shape: {x_test.shape} - y_test shape: {y_test.shape}")
 
-    data_augmentation = keras.Sequential(
-        [
-            layers.Normalization(),
-        ],
-        name="data_augmentation",
-    )
-    # Compute the mean and the variance of the training data for normalization.
-    data_augmentation.layers[0].adapt(x_train)
-
     model = create_vit_model(input_shape=input_shape,
-                             data_augmentation=data_augmentation,
+                             x_train=x_train,
                              patch_size=patch_size,
                              num_patches=num_patches,
                              projection_dim=projection_dim,
@@ -205,12 +206,12 @@ if __name__ == '__main__':
                              weight_decay=weight_decay)
 
     fitted_model = fit_vit_model(model=model, x_train=x_train, y_train=y_train, batch_size=batch_size,
-                                 num_epochs=num_epochs, validation_split=0.1, save_checkpoint=True)
+                                 num_epochs=num_epochs, validation_split=0.1, save_checkpoint=False)
     mse, rmse = evaluate_vit_model(model=fitted_model, x_test=x_test, y_test=y_test, use_checkpoint=False)
     print(f"MSE: {round(mse, 2)} and RMSE: {round(rmse, 2)}")
 
     pretrained_model = get_trained_model(input_shape=input_shape,
-                                         data_augmentation=data_augmentation,
+                                         x_train=x_train,
                                          patch_size=patch_size,
                                          num_patches=num_patches,
                                          projection_dim=projection_dim,
