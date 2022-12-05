@@ -18,6 +18,7 @@ import csv
 
 warnings.filterwarnings("ignore", category=rasterio.errors.NotGeoreferencedWarning)
 
+
 class Segmentation_Dataset_Maker(Dataset):
     def __init__(self, training_data_path, id_month_list, s1_bands, s2_bands, transform=None):
         self.training_data_path = training_data_path
@@ -54,13 +55,14 @@ class Segmentation_Dataset_Maker(Dataset):
         data_tensor = torch.tensor(np.asarray(arr_list, dtype=np.float32))
 
         data_tensor = (data_tensor.permute(1, 2, 0) - data_tensor.mean(dim=(1, 2))) / (
-                    data_tensor.std(dim=(1, 2)) + 0.01)
+                data_tensor.std(dim=(1, 2)) + 0.01)
         data_tensor = data_tensor.permute(2, 0, 1)
 
         if self.transform:
             data_tensor = self.transform(data_tensor)
 
         return data_tensor, label_tensor
+
 
 class Sentinel2Model(pl.LightningModule):
     def __init__(self, model):
@@ -87,7 +89,6 @@ class Sentinel2Model(pl.LightningModule):
 
 
 def prepare_dataset(chip_ids, train_data_path):
-
     # Change value to 1 to include band during training:
 
     sentinel_1_bands = {
@@ -127,7 +128,6 @@ def prepare_dataset(chip_ids, train_data_path):
             month_patch_path = osp.join(train_data_path, id, str(month))  # 1 is the green band, out of the 11 bands
 
             if osp.exists(osp.join(month_patch_path, "S2")):
-
                 id_month_list.append((id, str(month)))
 
     new_dataset = Segmentation_Dataset_Maker(train_data_path, id_month_list, s1_list, s2_list)
@@ -135,7 +135,6 @@ def prepare_dataset(chip_ids, train_data_path):
 
 
 def select_segmenter(segmenter_name, encoder_name, number_of_channels):
-
     if segmenter_name == "Unet":
 
         base_model = smp.Unet(
@@ -153,7 +152,6 @@ def select_segmenter(segmenter_name, encoder_name, number_of_channels):
 
 
 def create_tensor(band_list):
-
     band_list = np.asarray(band_list, dtype=np.float32)
 
     band_tensor = torch.tensor(band_list)
@@ -164,7 +162,6 @@ def create_tensor(band_list):
 
 
 def train(segmenter_name, encoder_name, epochs, training_fraction, batch_size=32):
-
     print("Getting train data...")
     train_data_path = osp.join(osp.dirname(data.__file__), "forest-biomass")
     with open(osp.join(osp.dirname(data.__file__), 'patch_names'), newline='') as f:
@@ -210,8 +207,8 @@ def train(segmenter_name, encoder_name, epochs, training_fraction, batch_size=32
 
     return s2_model
 
-def load_model(segmenter_name, encoder_name, number_of_channels, version=None):
 
+def load_model(segmenter_name, encoder_name, number_of_channels, version=None):
     print("Getting saved model...")
     log_folder_path = osp.join(osp.dirname(data.__file__), "tb_logs", f"{segmenter_name}_{encoder_name}")
 
@@ -245,6 +242,20 @@ def load_model(segmenter_name, encoder_name, number_of_channels, version=None):
 
     return s2_model
 
+
+def predict(model, patch, month, satellite):
+    predict_patch_path = osp.join(osp.dirname(data.__file__), "forest-biomass", patch, month, satellite)
+
+    collected_bands = []
+    for i in range(0, 10):
+        collected_bands.append(np.load(osp.join(predict_patch_path, f"{i}.npy"), allow_pickle=True))
+
+    model_input = create_tensor(collected_bands)
+
+    prediction = model(model_input).cpu().squeeze().detach().numpy()
+    return prediction
+
+
 def loading_example():
     model = load_model("Unet", "resnet50", 10)
 
@@ -261,6 +272,7 @@ def loading_example():
 
     plt.imshow(prediction.cpu().squeeze().detach().numpy(), interpolation='nearest')
     plt.show()
+
 
 if __name__ == '__main__':
     train("Unet", "efficientnet-b7", 5, 0.8)
