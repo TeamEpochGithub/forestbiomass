@@ -1,9 +1,11 @@
 import sys
 
 import torch
+from PIL.Image import Image
 from matplotlib import pyplot as plt
 from torch.utils.data import Dataset, DataLoader
 import torch.nn.functional as F
+from torch import distributed as dist
 import segmentation_models_pytorch as smp
 import os
 import rasterio
@@ -62,6 +64,7 @@ class Segmentation_Dataset_Maker(Dataset):
 
         return data_tensor, label_tensor
 
+
 class Sentinel2Model(pl.LightningModule):
     def __init__(self, model):
         super().__init__()
@@ -71,12 +74,16 @@ class Sentinel2Model(pl.LightningModule):
         x, y = batch
         y_hat = self.model(x)
         loss = F.mse_loss(y_hat, y)
+        self.log("train/loss", loss)
+        self.log("train/rmse", torch.sqrt(loss))
         return loss
 
     def validation_step(self, batch, batch_idx):
         x, y = batch
         y_hat = self.model(x)
         loss = F.mse_loss(y_hat, y)
+        self.log("train/loss", loss)
+        self.log("train/rmse", torch.sqrt(loss))
         return loss
 
     def configure_optimizers(self):
@@ -115,8 +122,6 @@ def prepare_dataset(chip_ids, train_data_path):
     s2_list = list(sentinel_2_bands.values())
 
     number_of_channels = s1_list.count(1) + s2_list.count(1)
-
-    available_tensors = []
 
     id_month_list = []
 
@@ -163,10 +168,11 @@ def create_tensor(band_list):
     return band_tensor.unsqueeze(0)
 
 
-def train(segmenter_name, encoder_name, epochs, training_fraction, batch_size=32):
+def train(segmenter_name, encoder_name, epochs, training_fraction, batch_size=8, dataloader_workers=6, accelerator="gpu"):
 
     print("Getting train data...")
     train_data_path = osp.join(osp.dirname(data.__file__), "forest-biomass")
+    train_data_path = r"\\DESKTOP-P8NCSTN\Epoch\forestbiomass\data\converted"
     with open(osp.join(osp.dirname(data.__file__), 'patch_names'), newline='') as f:
         reader = csv.reader(f)
         patch_name_data = list(reader)
@@ -179,8 +185,8 @@ def train(segmenter_name, encoder_name, epochs, training_fraction, batch_size=32
 
     train_set, val_set = torch.utils.data.random_split(train_dataset, [train_size, valid_size])
 
-    train_dataloader = DataLoader(train_set, batch_size=batch_size, shuffle=True, num_workers=6)
-    valid_dataloader = DataLoader(val_set, batch_size=batch_size, shuffle=False, num_workers=6)
+    train_dataloader = DataLoader(train_set, batch_size=batch_size, shuffle=True, num_workers=12)
+    valid_dataloader = DataLoader(val_set, batch_size=batch_size, shuffle=False, num_workers=12)
 
     base_model = select_segmenter(segmenter_name, encoder_name, number_of_channels)
 
@@ -199,16 +205,17 @@ def train(segmenter_name, encoder_name, epochs, training_fraction, batch_size=32
     logger = TensorBoardLogger("tb_logs", name=f"{segmenter_name}_{encoder_name}")
 
     trainer = Trainer(
-        accelerator="cpu",
+        accelerator="gpu",
         devices=1,
         max_epochs=epochs,
         logger=[logger],
-        log_every_n_steps=5
+        log_every_n_steps=5,
     )
     # Train the model ⚡
     trainer.fit(s2_model, train_dataloaders=train_dataloader, val_dataloaders=valid_dataloader)
 
     return s2_model
+
 
 def load_model(segmenter_name, encoder_name, number_of_channels, version=None):
 
@@ -245,6 +252,7 @@ def load_model(segmenter_name, encoder_name, number_of_channels, version=None):
 
     return s2_model
 
+
 def loading_example():
     model = load_model("Unet", "resnet50", 10)
 
@@ -262,5 +270,73 @@ def loading_example():
     plt.imshow(prediction.cpu().squeeze().detach().numpy(), interpolation='nearest')
     plt.show()
 
+
+def create_submissions():
+
+    model = load_model("Unet", "efficientnet-b7", 14)
+
+    test_data_path = r"\\DESKTOP-P8NCSTN\Epoch\forestbiomass\data\testing_converted"
+
+    with open(osp.join(osp.dirname(data.__file__), 'test_patch_names'), newline='') as f:
+        reader = csv.reader(f)
+        patch_name_data = list(reader)
+    patch_names = patch_name_data[0]
+
+    total = len(patch_names)
+
+    for index, id in enumerate(patch_names):
+
+        all_months = []
+
+        for month in range(0, 12):
+
+            if month < 10:
+                num = f"0{month}"
+            else:
+                num = f"{month}"
+
+            s1_folder_path = osp.join(test_data_path, id, str(month), "S1")
+            s2_folder_path = osp.join(test_data_path, id, str(month))
+
+            if "S2" in s2_folder_path:
+
+                all_bands = []
+
+                for s1_index in range(0, 4):
+
+                    band = np.load(osp.join(s1_folder_path, f"{s1_index}.npy"), allow_pickle=True)
+                    all_bands.append(band)
+
+                for s2_index in range(0, 11):
+
+                    band = np.load(osp.join(s2_folder_path, "S2", f"{s2_index}.npy"), allow_pickle=True)
+                    all_bands.append(band)
+
+                input_tensor = torch.tensor(np.asarray(all_bands, dtype=np.float32))
+
+                input_tensor = (input_tensor.permute(1, 2, 0) - input_tensor.mean(dim=(1, 2))) / (input_tensor.std(dim=(1, 2)) + 0.01)
+                input_tensor = input_tensor.permute(2, 0, 1)
+                input_tensor = input_tensor.unsqueeze(0)
+
+                pred = model(input_tensor)
+
+                pred = pred.cpu().squeeze().detach().numpy()
+
+                all_months.append(pred)
+
+        count = len(all_months)
+
+        agbm_arr = np.asarray(sum(all_months) / count)
+
+        test_agbm_path = osp.abspath(
+            osp.join(osp.realpath('__file__'), f"../../../data/imgs/test_agbm/{id}_agbm.tif"))
+
+        im = Image.fromarray(agbm_arr)
+        im.save(test_agbm_path)
+
+        if index % 100 == 0:
+            print(f"{index} / {total}")
+
+
 if __name__ == '__main__':
-    train("Unet", "efficientnet-b7", 5, 0.8)
+    train("Unet", "efficientnet-b7", 100 , 0.8)
