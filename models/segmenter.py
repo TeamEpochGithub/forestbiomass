@@ -18,41 +18,49 @@ import csv
 
 warnings.filterwarnings("ignore", category=rasterio.errors.NotGeoreferencedWarning)
 
-
 class Segmentation_Dataset_Maker(Dataset):
-    def __init__(self, tensor_list, transform=None):
-        self.tensor_list = tensor_list
-        self.length = len(tensor_list)
+    def __init__(self, training_data_path, id_month_list, s1_bands, s2_bands, transform=None):
+        self.training_data_path = training_data_path
+        self.id_month_list = id_month_list
+        self.s1_bands = s1_bands
+        self.s2_bands = s2_bands
         self.transform = transform
 
     def __len__(self):
-        return self.length
+        return len(self.id_month_list)
 
     def __getitem__(self, idx):
 
-        data_tensor, label_tensor = self.tensor_list[idx]
+        id, month = self.id_month_list[idx]
 
-        # print("###################################")
-        #
-        # print(len(data_tensor))
-        # print(data_tensor)
-        #
-        # print("-----------------------------------")
-        #
-        # print(len(label_tensor))
-        # print(label_tensor)
-        #
-        # print("###################################")
-        #
-        # sys.exit()
-        #
-        # sys.exit()
+        label_path = osp.join(self.training_data_path, id, "label.npy")
+        label = np.load(label_path, allow_pickle=True)
+        label_tensor = torch.tensor(np.asarray([label], dtype=np.float32))
+
+        arr_list = []
+
+        for index, s1_index in enumerate(self.s1_bands):
+
+            if s1_index == 1:
+                band = np.load(osp.join(self.training_data_path, id, month, "S1", f"{index}.npy"), allow_pickle=True)
+                arr_list.append(band)
+
+        for index, s2_index in enumerate(self.s2_bands):
+
+            if s2_index == 1:
+                band = np.load(osp.join(self.training_data_path, id, month, "S2", f"{index}.npy"), allow_pickle=True)
+                arr_list.append(band)
+
+        data_tensor = torch.tensor(np.asarray(arr_list, dtype=np.float32))
+
+        data_tensor = (data_tensor.permute(1, 2, 0) - data_tensor.mean(dim=(1, 2))) / (
+                    data_tensor.std(dim=(1, 2)) + 0.01)
+        data_tensor = data_tensor.permute(2, 0, 1)
 
         if self.transform:
             data_tensor = self.transform(data_tensor)
 
         return data_tensor, label_tensor
-
 
 class Sentinel2Model(pl.LightningModule):
     def __init__(self, model):
@@ -83,10 +91,10 @@ def prepare_dataset(chip_ids, train_data_path):
     # Change value to 1 to include band during training:
 
     sentinel_1_bands = {
-        "VV ascending": 0,
-        "VH ascending": 0,
-        "VV descending": 0,
-        "VH descending": 0
+        "VV ascending": 1,
+        "VH ascending": 1,
+        "VV descending": 1,
+        "VH descending": 1
     }
 
     sentinel_2_bands = {
@@ -110,53 +118,19 @@ def prepare_dataset(chip_ids, train_data_path):
 
     available_tensors = []
 
+    id_month_list = []
+
     for id in chip_ids:
-
-        label_path = osp.join(train_data_path, id, "label.npy")
-
-        try:
-            label = np.load(label_path, allow_pickle=True)
-            if label.shape == ():
-                continue
-        except IOError as e:
-            continue
-
-        label_tensor = torch.tensor(np.asarray([label], dtype=np.float32))
 
         for month in range(0, 12):
 
             month_patch_path = osp.join(train_data_path, id, str(month))  # 1 is the green band, out of the 11 bands
 
-            try:
+            if osp.exists(osp.join(month_patch_path, "S2")):
 
-                arr_list = []
+                id_month_list.append((id, str(month)))
 
-                for index, s1_index in enumerate(s1_list):
-
-                    if s1_index == 1:
-
-                        band = np.load(osp.join(month_patch_path, "S1", f"{index}.npy"), allow_pickle=True)
-                        arr_list.append(band)
-
-                for index, s2_index in enumerate(s2_list):
-
-                    if s2_index == 1:
-                        band = np.load(osp.join(month_patch_path, "S2", f"{index}.npy"), allow_pickle=True)
-                        arr_list.append(band)
-
-                data_tensor = torch.tensor(np.asarray(arr_list, dtype=np.float32))
-
-                # These operations were present in the original notebook. I'll figure out some other time what they do.
-                # By some other time I mean never.
-                data_tensor = (data_tensor.permute(1, 2, 0) - data_tensor.mean(dim=(1, 2))) / (data_tensor.std(dim=(1, 2)) + 0.01)
-                data_tensor = data_tensor.permute(2, 0, 1)
-
-                available_tensors.append((data_tensor, label_tensor))
-
-            except IOError as e:
-                continue
-
-    new_dataset = Segmentation_Dataset_Maker(available_tensors)
+    new_dataset = Segmentation_Dataset_Maker(train_data_path, id_month_list, s1_list, s2_list)
     return new_dataset, number_of_channels
 
 
@@ -271,7 +245,7 @@ def load_model(segmenter_name, encoder_name, number_of_channels, version=None):
 
     return s2_model
 
-if __name__ == '__main__':
+def loading_example():
     model = load_model("Unet", "resnet50", 10)
 
     example_path = osp.join(osp.dirname(data.__file__), "forest-biomass", "2d977c85", "0", "S2")
@@ -287,3 +261,6 @@ if __name__ == '__main__':
 
     plt.imshow(prediction.cpu().squeeze().detach().numpy(), interpolation='nearest')
     plt.show()
+
+if __name__ == '__main__':
+    train("Unet", "efficientnet-b7", 5, 0.8)
