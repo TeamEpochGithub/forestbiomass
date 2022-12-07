@@ -29,10 +29,14 @@ class CNN(tf.keras.Model):
         x = tf.keras.Input(shape=(256, 256, 11))
         return tf.keras.Model(inputs=[x], outputs=self.call(x))
 
-class DataGenerator(tf.keras.utils.Sequence):
+class DataGeneratorTif(tf.keras.utils.Sequence):
+    # TODO: Data generator for npy file structure
+    # TODO: Take into account every s1 and s2 possible
     def __init__(self, patch_ids, batch_size=4):
         """
         Few things to mention:
+            - This data generator uses original tif files, now only s2 and averages them for every patch
+            - Data is reshaped to be compatible with CNN
             - The data generator tells our model how to fetch one batch of training data (in this case from files)
             - Any work that can be done before training, should be done in init, since we want fetching a batch to be fast
             - Therefore, we want all filenames and labels to be determined before training
@@ -71,8 +75,7 @@ class DataGenerator(tf.keras.utils.Sequence):
             label = label.ReadAsArray()
             label = label.reshape(256 * 256)
             batch_y.append(label)
-
-        #For batch in patches moet hier nog bij
+        # For every patch in batch get all possible s2 files
         for p in batch_patches:
             batch_per_patch = []
             for s2_tif in batch_filenames:
@@ -81,13 +84,14 @@ class DataGenerator(tf.keras.utils.Sequence):
                     s2 = s2.ReadAsArray()
                     s2 = s2.reshape(256, 256, 11)
                     batch_per_patch.append(s2)
-                    # print(np.asarray(batch_per_patch).shape)
             # Average s2 months to one array
             batch_x.append(np.average(batch_per_patch, axis=0))
 
         return np.asarray(batch_x), np.asarray(batch_y)
 
 if __name__ == '__main__':
+    # Change this to some pretrained cnn of keras
+    # Check this link for different models: https://www.tensorflow.org/api_docs/python/tf/keras/applications
     pretrained_cnn = tf.keras.applications.efficientnet.EfficientNetB0(include_top=False,
                                                             weights='imagenet',
                                                             input_shape=(256, 256, 3))
@@ -101,6 +105,6 @@ if __name__ == '__main__':
         patch_name_data = list(reader)
     patch_names = patch_name_data[0]
 
-    datagen = DataGenerator(patch_names)
+    datagen = DataGeneratorTif(patch_names)
 
     model.fit(datagen, epochs=100)
