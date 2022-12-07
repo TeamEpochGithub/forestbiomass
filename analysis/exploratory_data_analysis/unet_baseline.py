@@ -164,12 +164,13 @@ class Sentinel2ModelAlternative(pl.LightningModule):
 def train():
 
 
-    train_data_path = osp.abspath(osp.join(osp.realpath('__file__'), "../../../data/imgs/train_features"))
+    train_data_path = r'C:\Users\kuipe\OneDrive\Bureaublad\Epoch\forestbiomass\data\train_agbm'
     train_label_path = osp.abspath(osp.join(osp.realpath('__file__'), "../../../data/imgs/train_agbm"))
     metadata_path = osp.abspath(osp.join(osp.realpath('__file__'), "../../../data/features_metadata_FzP19JI.csv"))
     features_df = pd.read_csv(metadata_path)
 
     train_dataset = SentinelDatasetAlternative(metadata_path, train_data_path, label_dir=train_label_path)
+    print(train_dataset[1].shape)
 
     train_size = int(0.8 * len(train_dataset))
     valid_size = len(train_dataset) - train_size
