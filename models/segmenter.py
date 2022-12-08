@@ -2,6 +2,7 @@ import sys
 
 import torch
 from matplotlib import pyplot as plt
+from pytorch_lightning.strategies import DDPStrategy
 from torch.utils.data import Dataset, DataLoader
 import torch.nn.functional as F
 import segmentation_models_pytorch as smp
@@ -17,6 +18,7 @@ import data
 import csv
 
 warnings.filterwarnings("ignore", category=rasterio.errors.NotGeoreferencedWarning)
+
 
 class Segmentation_Dataset_Maker(Dataset):
     def __init__(self, training_data_path, id_month_list, s1_bands, s2_bands, transform=None):
@@ -54,13 +56,14 @@ class Segmentation_Dataset_Maker(Dataset):
         data_tensor = torch.tensor(np.asarray(arr_list, dtype=np.float32))
 
         data_tensor = (data_tensor.permute(1, 2, 0) - data_tensor.mean(dim=(1, 2))) / (
-                    data_tensor.std(dim=(1, 2)) + 0.01)
+                data_tensor.std(dim=(1, 2)) + 0.01)
         data_tensor = data_tensor.permute(2, 0, 1)
 
         if self.transform:
             data_tensor = self.transform(data_tensor)
 
         return data_tensor, label_tensor
+
 
 class Sentinel2Model(pl.LightningModule):
     def __init__(self, model):
@@ -70,13 +73,15 @@ class Sentinel2Model(pl.LightningModule):
     def training_step(self, batch, batch_idx):
         x, y = batch
         y_hat = self.model(x)
-        loss = F.mse_loss(y_hat, y)
+        # loss = F.mse_loss(y_hat, y)
+        loss = self.rmse_loss(y_hat, y)
         return loss
 
     def validation_step(self, batch, batch_idx):
         x, y = batch
         y_hat = self.model(x)
-        loss = F.mse_loss(y_hat, y)
+        # loss = F.mse_loss(y_hat, y)
+        loss = self.rmse_loss(y_hat, y)
         return loss
 
     def configure_optimizers(self):
@@ -85,9 +90,15 @@ class Sentinel2Model(pl.LightningModule):
     def forward(self, x):
         return self.model(x)
 
+    def rmse_loss(self, x, y):
+        eps = 1e-6
+        # criterion = torch.nn.MSELoss()
+        criterion = F.mse_loss
+        loss = torch.sqrt(criterion(x, y) + eps)
+        return loss
+
 
 def prepare_dataset(chip_ids, train_data_path):
-
     # Change value to 1 to include band during training:
 
     sentinel_1_bands = {
@@ -127,7 +138,6 @@ def prepare_dataset(chip_ids, train_data_path):
             month_patch_path = osp.join(train_data_path, id, str(month))  # 1 is the green band, out of the 11 bands
 
             if osp.exists(osp.join(month_patch_path, "S2")):
-
                 id_month_list.append((id, str(month)))
 
     new_dataset = Segmentation_Dataset_Maker(train_data_path, id_month_list, s1_list, s2_list)
@@ -135,7 +145,6 @@ def prepare_dataset(chip_ids, train_data_path):
 
 
 def select_segmenter(segmenter_name, encoder_name, number_of_channels):
-
     if segmenter_name == "Unet":
 
         base_model = smp.Unet(
@@ -153,7 +162,6 @@ def select_segmenter(segmenter_name, encoder_name, number_of_channels):
 
 
 def create_tensor(band_list):
-
     band_list = np.asarray(band_list, dtype=np.float32)
 
     band_tensor = torch.tensor(band_list)
@@ -163,8 +171,7 @@ def create_tensor(band_list):
     return band_tensor.unsqueeze(0)
 
 
-def train(segmenter_name, encoder_name, epochs, training_fraction, batch_size=32):
-
+def train(segmenter_name, encoder_name, epochs, training_fraction, accelerator, batch_size=16):
     print("Getting train data...")
     train_data_path = osp.join(osp.dirname(data.__file__), "forest-biomass")
     with open(osp.join(osp.dirname(data.__file__), 'patch_names'), newline='') as f:
@@ -179,8 +186,8 @@ def train(segmenter_name, encoder_name, epochs, training_fraction, batch_size=32
 
     train_set, val_set = torch.utils.data.random_split(train_dataset, [train_size, valid_size])
 
-    train_dataloader = DataLoader(train_set, batch_size=batch_size, shuffle=True, num_workers=6)
-    valid_dataloader = DataLoader(val_set, batch_size=batch_size, shuffle=False, num_workers=6)
+    train_dataloader = DataLoader(train_set, batch_size=batch_size, shuffle=True, num_workers=5)
+    valid_dataloader = DataLoader(val_set, batch_size=batch_size, shuffle=False, num_workers=5)
 
     base_model = select_segmenter(segmenter_name, encoder_name, number_of_channels)
 
@@ -198,20 +205,23 @@ def train(segmenter_name, encoder_name, epochs, training_fraction, batch_size=32
 
     logger = TensorBoardLogger("tb_logs", name=f"{segmenter_name}_{encoder_name}")
 
+    ddp = DDPStrategy(process_group_backend="gloo")
     trainer = Trainer(
-        accelerator="cpu",
-        devices=1,
+        strategy=ddp,
+        accelerator=accelerator,
+        devices=2,
         max_epochs=epochs,
         logger=[logger],
-        log_every_n_steps=5
+        log_every_n_steps=100,
+        num_sanity_val_steps=0,
     )
     # Train the model ⚡
     trainer.fit(s2_model, train_dataloaders=train_dataloader, val_dataloaders=valid_dataloader)
 
     return s2_model
 
-def load_model(segmenter_name, encoder_name, number_of_channels, version=None):
 
+def load_model(segmenter_name, encoder_name, number_of_channels, version=None):
     print("Getting saved model...")
     log_folder_path = osp.join(osp.dirname(data.__file__), "tb_logs", f"{segmenter_name}_{encoder_name}")
 
@@ -245,6 +255,7 @@ def load_model(segmenter_name, encoder_name, number_of_channels, version=None):
 
     return s2_model
 
+
 def loading_example():
     model = load_model("Unet", "resnet50", 10)
 
@@ -262,5 +273,6 @@ def loading_example():
     plt.imshow(prediction.cpu().squeeze().detach().numpy(), interpolation='nearest')
     plt.show()
 
+
 if __name__ == '__main__':
-    train("Unet", "efficientnet-b7", 5, 0.8)
+    train("Unet", "efficientnet-b7", 40, 0.8, accelerator="gpu")
