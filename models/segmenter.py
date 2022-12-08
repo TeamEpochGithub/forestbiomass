@@ -1,7 +1,7 @@
 import sys
 
 import torch
-from PIL.Image import Image
+from PIL import Image
 from matplotlib import pyplot as plt
 from torch.utils.data import Dataset, DataLoader
 import torch.nn.functional as F
@@ -16,6 +16,7 @@ import numpy as np
 import os.path as osp
 from pytorch_lightning.loggers import TensorBoardLogger
 import data
+import models
 import csv
 
 warnings.filterwarnings("ignore", category=rasterio.errors.NotGeoreferencedWarning)
@@ -220,7 +221,8 @@ def train(segmenter_name, encoder_name, epochs, training_fraction, batch_size=8,
 def load_model(segmenter_name, encoder_name, number_of_channels, version=None):
 
     print("Getting saved model...")
-    log_folder_path = osp.join(osp.dirname(data.__file__), "tb_logs", f"{segmenter_name}_{encoder_name}")
+
+    log_folder_path = osp.join(osp.dirname(models.__file__), "tb_logs", f"{segmenter_name}_{encoder_name}")
 
     if version is None:
         version_dir = list(os.scandir(log_folder_path))[-1]
@@ -291,14 +293,14 @@ def create_submissions():
         for month in range(0, 12):
 
             if month < 10:
-                num = f"0{month}"
+                month = f"0{month}"
             else:
-                num = f"{month}"
+                month = f"{month}"
 
             s1_folder_path = osp.join(test_data_path, id, str(month), "S1")
-            s2_folder_path = osp.join(test_data_path, id, str(month))
+            s2_folder_path = osp.join(test_data_path, id, str(month), "S2")
 
-            if "S2" in s2_folder_path:
+            if osp.exists(s2_folder_path):
 
                 all_bands = []
 
@@ -307,9 +309,9 @@ def create_submissions():
                     band = np.load(osp.join(s1_folder_path, f"{s1_index}.npy"), allow_pickle=True)
                     all_bands.append(band)
 
-                for s2_index in range(0, 11):
+                for s2_index in range(0, 10):
 
-                    band = np.load(osp.join(s2_folder_path, "S2", f"{s2_index}.npy"), allow_pickle=True)
+                    band = np.load(osp.join(s2_folder_path, f"{s2_index}.npy"), allow_pickle=True)
                     all_bands.append(band)
 
                 input_tensor = torch.tensor(np.asarray(all_bands, dtype=np.float32))
@@ -328,8 +330,7 @@ def create_submissions():
 
         agbm_arr = np.asarray(sum(all_months) / count)
 
-        test_agbm_path = osp.abspath(
-            osp.join(osp.realpath('__file__'), f"../../../data/imgs/test_agbm/{id}_agbm.tif"))
+        test_agbm_path = osp.join(osp.dirname(data.__file__), "imgs", "test_agbm", f"{id}_agbm.tif")
 
         im = Image.fromarray(agbm_arr)
         im.save(test_agbm_path)
@@ -339,4 +340,5 @@ def create_submissions():
 
 
 if __name__ == '__main__':
-    train("Unet", "efficientnet-b7", 100 , 0.8)
+    create_submissions()
+    #train("Unet", "efficientnet-b7", 100 , 0.8)
