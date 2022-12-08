@@ -1,7 +1,6 @@
 import csv
 import os
 import os.path as osp
-import sys
 
 import numpy as np
 
