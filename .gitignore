@@ -1,6 +1,10 @@
 .idea
 data/imgs
 data/converted
+data/forest-biomass
+data/forest-biomass-test
+models/vit_checkpoints
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]

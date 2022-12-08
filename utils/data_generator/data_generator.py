@@ -63,7 +63,7 @@ def list_directories(bucket_name, prefix):
     return [x for x in iterator]
 
 class DataGenerator():
-    def __init__(self, batch_size=16):
+    def __init__(self, batch_size=2):
         """
         Few things to mention:
             - The data generator tells our model how to fetch one batch of training data (in this case from files)
@@ -176,5 +176,5 @@ if __name__ == "__main__":
     path = "gs://forest-biomass/forest"
 
     datagen = DataGenerator()
-    x, y = datagen[0]
+    x, missing, y = datagen[8]
     print(x[0].shape, x[1].shape)
