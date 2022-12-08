@@ -120,6 +120,7 @@ def extract_and_save_patch_names():
         wr = csv.writer(myfile, quoting=csv.QUOTE_ALL)
         wr.writerow(all_patch_names)
 
+
 def extract_and_save_testing_patch_names():
     """
     Get all patch names from testing data and then save them
@@ -143,6 +144,7 @@ def extract_and_save_testing_patch_names():
     with open(osp.join(osp.dirname(data.__file__), 'test_patch_names'), 'w', newline='') as myfile:
         wr = csv.writer(myfile, quoting=csv.QUOTE_ALL)
         wr.writerow(all_patch_names)
+
 
 def save_all_patches():
     """
@@ -184,6 +186,7 @@ def save_all_patches():
                     save_s2_path = osp.join("converted", patch, str(month), "S2")
                     save_ndarray(save_s2_path, str(band), d)
 
+
 def save_all_testing_patches():
     """
     Save all testing patches, converted to .npy, in a new file structure
@@ -193,7 +196,6 @@ def save_all_testing_patches():
         patch_name_data = list(reader)
     patch_names = patch_name_data[0]
 
-    # The absolute paths for tif images and converted images on pc #2
     test_data_path = osp.join(osp.dirname(img_data.__file__), "test_features")
     test_data_converted_path = osp.join(osp.dirname(data.__file__), "forest-biomass-test")
 
@@ -205,8 +207,6 @@ def save_all_testing_patches():
             print(f"{index} / {total}")
 
         for month in range(0, 12):
-            #print(month)
-
             s1_path = osp.join(test_data_path, patch + "_S1_" + f"{month:02}.tif")
             s2_path = osp.join(test_data_path, patch + "_S2_" + f"{month:02}.tif")
 

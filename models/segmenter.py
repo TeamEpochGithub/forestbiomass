@@ -1,12 +1,9 @@
-import sys
-
 import torch
 from PIL import Image
 from matplotlib import pyplot as plt
 from pytorch_lightning.strategies import DDPStrategy
 from torch.utils.data import Dataset, DataLoader
 import torch.nn.functional as F
-from torch import distributed as dist
 import segmentation_models_pytorch as smp
 import os
 import rasterio
@@ -281,8 +278,7 @@ def loading_example():
 def create_submissions():
 
     model = load_model("Unet", "efficientnet-b7", 14)
-
-    test_data_path = r"\\DESKTOP-P8NCSTN\Epoch\forestbiomass\data\testing_converted"
+    test_data_path = osp.join(osp.dirname(data.__file__), "forest-biomass-test")
 
     with open(osp.join(osp.dirname(data.__file__), 'test_patch_names'), newline='') as f:
         reader = csv.reader(f)
@@ -297,13 +293,8 @@ def create_submissions():
 
         for month in range(0, 12):
 
-            if month < 10:
-                month = f"0{month}"
-            else:
-                month = f"{month}"
-
-            s1_folder_path = osp.join(test_data_path, id, str(month), "S1")
-            s2_folder_path = osp.join(test_data_path, id, str(month), "S2")
+            s1_folder_path = osp.join(test_data_path, id, f"{month:02}", "S1")
+            s2_folder_path = osp.join(test_data_path, id, f"{month:02}", "S2")
 
             if osp.exists(s2_folder_path):
 
