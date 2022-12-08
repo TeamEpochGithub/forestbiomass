@@ -7,36 +7,37 @@ import os.path as osp
 import csv
 import data
 
-# You can change pretrained CNN by changing self.base
-class CNN(tf.keras.Model):
-    def __init__(self, base):
-        super(CNN, self).__init__()
+
+class CNNModel(tf.keras.Model):
+    def __init__(self, base, weights):
+        super(CNNModel, self).__init__()
         self.base = base
-        self.conv = tf.keras.layers.Conv2D(3, 3, padding='same')
-        self.flat1 = tf.keras.layers.GlobalAveragePooling2D()
+        base_weights = weights
+
+        for i in range(3, len(self.base.layers)):
+            self.base.layers[i].set_weights(base_weights.layers[i].get_weights())
+
+        del base_weights
+        self.pool = tf.keras.layers.GlobalAveragePooling2D()
         self.dens3 = tf.keras.layers.Dense(256, activation='relu')
         self.out = tf.keras.layers.Dense(256 * 256, activation='linear')
 
-    def call(self, x, **kwargs):
-        x = self.conv(x)
+    def call(self, x, training=None, **kwargs):
         x = self.base(x)
-        x = self.flat1(x)
+        x = self.pool(x)
         x = self.dens3(x)
         x = self.out(x)
         return x
 
-    def build_graph(self):
-        x = tf.keras.Input(shape=(256, 256, 11))
-        return tf.keras.Model(inputs=[x], outputs=self.call(x))
 
-
-def create_model(base_model):
-    model = CNN(base_model)
-    model = model.build_graph()
+def create_model(base_model, base_weights):
+    model = CNNModel(base_model, base_weights)
+    model.build(input_shape=(None, 256, 256, 11))
     model.compile(optimizer="adam", loss=tf.keras.losses.MeanSquaredError(),
                   metrics=[tf.keras.metrics.RootMeanSquaredError()])
 
     return model
+
 
 def get_patch_names():
     with open(osp.join(osp.dirname(data.__file__), 'patch_name_test'), newline='') as f:
@@ -146,13 +147,14 @@ class DataGeneratorNpy(tf.keras.utils.Sequence):
             s2_patch = []
             for month in range(12):
                 s2_month = []
+
                 # Check if S2 data exists for a specific month
                 try:
                     bands = [osp.join(self.dir_path + p + f'/{month}/S2/', file) for file in os.listdir(self.dir_path + p + f'/{month}/S2')]
+                    for band in bands:
+                        s2_month.append(np.load(band))
                 except:
                     continue
-                for band in bands:
-                    s2_month.append(np.load(band))
 
                 s2_patch.append(s2_month)
 
@@ -167,12 +169,12 @@ class DataGeneratorNpy(tf.keras.utils.Sequence):
 if __name__ == '__main__':
     # Change this to some pretrained cnn of keras
     # Check this link for different models: https://www.tensorflow.org/api_docs/python/tf/keras/applications
-    pretrained_cnn = tf.keras.applications.resnet50.ResNet50(include_top=False,
-                                                            weights='imagenet',
-                                                            input_shape=(256, 256, 3))
+    base_model = tf.keras.applications.resnet50.ResNet50(include_top=False, weights=None, input_shape=(256, 256, 11))
+    base_weights = tf.keras.applications.resnet50.ResNet50(include_top=False, weights='imagenet', input_shape=(256, 256, 3))
     # Create model
-    model = create_model(pretrained_cnn)
+    model = create_model(base_model, base_weights)
     # Get patch names to feed in data generator.
+    # model = create_model_test(base_weights)
     patch_names = get_patch_names()
     datagen = DataGeneratorNpy(patch_names)
     # Use data generator to fit on model
