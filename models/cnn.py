@@ -29,9 +29,23 @@ class CNN(tf.keras.Model):
         x = tf.keras.Input(shape=(256, 256, 11))
         return tf.keras.Model(inputs=[x], outputs=self.call(x))
 
+
+def create_model(base_model):
+    model = CNN(base_model)
+    model = model.build_graph()
+    model.compile(optimizer="adam", loss=tf.keras.losses.MeanSquaredError(),
+                  metrics=[tf.keras.metrics.RootMeanSquaredError()])
+
+    return model
+
+def get_patch_names():
+    with open(osp.join(osp.dirname(data.__file__), 'patch_name_test'), newline='') as f:
+        reader = csv.reader(f)
+        patch_name_data = list(reader)
+
+    return patch_name_data[0]
+
 class DataGeneratorTif(tf.keras.utils.Sequence):
-    # TODO: Data generator for npy file structure
-    # TODO: Take into account every s1 and s2 possible
     def __init__(self, patch_ids, batch_size=4):
         """
         Few things to mention:
@@ -121,15 +135,18 @@ class DataGeneratorNpy(tf.keras.utils.Sequence):
 
         batch_x = []
         batch_y = []
+        # Get labels per patch.
         for label_npy in batch_labels:
             label = np.load(label_npy).reshape(256 * 256)
             batch_y.append(label)
 
-        #For batch in patches moet hier nog bij
+        # Get all possible s2 bands that are available per patch
         for p in batch_patches:
+
             s2_patch = []
             for month in range(12):
                 s2_month = []
+                # Check if S2 data exists for a specific month
                 try:
                     bands = [osp.join(self.dir_path + p + f'/{month}/S2/', file) for file in os.listdir(self.dir_path + p + f'/{month}/S2')]
                 except:
@@ -138,7 +155,10 @@ class DataGeneratorNpy(tf.keras.utils.Sequence):
                     s2_month.append(np.load(band))
 
                 s2_patch.append(s2_month)
+
+            # average all the bands per patch together.
             average = np.average(s2_patch, axis=0)
+            # Reshape it so that the CNN model can take the data in. 11 is the number of channels.
             average = average.reshape(256, 256, 11)
             batch_x.append(average)
 
@@ -150,16 +170,10 @@ if __name__ == '__main__':
     pretrained_cnn = tf.keras.applications.resnet50.ResNet50(include_top=False,
                                                             weights='imagenet',
                                                             input_shape=(256, 256, 3))
-    model = CNN(pretrained_cnn)
-    model = model.build_graph()
-    model.compile(optimizer="adam", loss=tf.keras.losses.MeanSquaredError(),
-                  metrics=[tf.keras.metrics.RootMeanSquaredError()])
-
-    with open(osp.join(osp.dirname(data.__file__), 'patch_name_test'), newline='') as f:
-        reader = csv.reader(f)
-        patch_name_data = list(reader)
-    patch_names = patch_name_data[0]
-
+    # Create model
+    model = create_model(pretrained_cnn)
+    # Get patch names to feed in data generator.
+    patch_names = get_patch_names()
     datagen = DataGeneratorNpy(patch_names)
-
+    # Use data generator to fit on model
     model.fit(datagen, epochs=100)
