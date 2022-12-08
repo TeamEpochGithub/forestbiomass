@@ -27,7 +27,7 @@ def get_worst_predictions_from_model(model, n=10) -> list:
     """
     Calculate the worst predictions from a model based on RMSE, returns prediction, label, and score
     """
-    train_data_path = osp.join(osp.dirname(data.__file__), "forest-biomass")
+    train_data_path = osp.join(osp.dirname(data.__file__), "converted")
     with open(osp.join(osp.dirname(data.__file__), 'patch_names'), newline='') as f:
         reader = csv.reader(f)
         patch_name_data = list(reader)
@@ -50,7 +50,7 @@ def get_worst_predictions_from_model(model, n=10) -> list:
 
 if __name__ == '__main__':
     print("Getting train data...")
-    train_data_path = osp.join(osp.dirname(data.__file__), "forest-biomass")
+    train_data_path = osp.join(osp.dirname(data.__file__), "converted")
     with open(osp.join(osp.dirname(data.__file__), 'patch_names'), newline='') as f:
         reader = csv.reader(f)
         patch_name_data = list(reader)

@@ -18,6 +18,7 @@ from pytorch_lightning.loggers import TensorBoardLogger
 import data
 import models
 import csv
+import argparse
 
 warnings.filterwarnings("ignore", category=rasterio.errors.NotGeoreferencedWarning)
 
@@ -94,35 +95,12 @@ class Sentinel2Model(pl.LightningModule):
         return self.model(x)
 
 
-def prepare_dataset(chip_ids, train_data_path):
+def prepare_dataset(args):
 
-    # Change value to 1 to include band during training:
-
-    sentinel_1_bands = {
-        "VV ascending": 1,
-        "VH ascending": 1,
-        "VV descending": 1,
-        "VH descending": 1
-    }
-
-    sentinel_2_bands = {
-        "B2-Blue": 1,
-        "B3-Green": 1,
-        "B4-Red": 1,
-        "B5-Veg red edge 1": 1,
-        "B6-Veg red edge 2": 1,
-        "B7-Veg red edge 3": 1,
-        "B8-NIR": 1,
-        "B8A-Narrow NIR": 1,
-        "B11-SWIR 1": 1,
-        "B12-SWIR 2": 1,
-        "Cloud probability": 0
-    }
-
-    s1_list = list(sentinel_1_bands.values())
-    s2_list = list(sentinel_2_bands.values())
-
-    number_of_channels = s1_list.count(1) + s2_list.count(1)
+    with open(args.training_ids_path, newline='') as f:
+        reader = csv.reader(f)
+        patch_name_data = list(reader)
+    chip_ids = patch_name_data[0]
 
     id_month_list = []
 
@@ -130,14 +108,14 @@ def prepare_dataset(chip_ids, train_data_path):
 
         for month in range(0, 12):
 
-            month_patch_path = osp.join(train_data_path, id, str(month))  # 1 is the green band, out of the 11 bands
+            month_patch_path = osp.join(args.training_features_path, id, str(month))  # 1 is the green band, out of the 11 bands
 
             if osp.exists(osp.join(month_patch_path, "S2")):
 
                 id_month_list.append((id, str(month)))
 
-    new_dataset = Segmentation_Dataset_Maker(train_data_path, id_month_list, s1_list, s2_list)
-    return new_dataset, number_of_channels
+    new_dataset = Segmentation_Dataset_Maker(args.training_features_path, id_month_list, args.S1_band_selection, args.S2_band_selection)
+    return new_dataset, (len(args.S1_band_selection) + len(args.S2_band_selection))
 
 
 def select_segmenter(segmenter_name, encoder_name, number_of_channels):
@@ -169,32 +147,26 @@ def create_tensor(band_list):
     return band_tensor.unsqueeze(0)
 
 
-def train(segmenter_name, encoder_name, epochs, training_fraction, batch_size=8, dataloader_workers=6, accelerator="gpu"):
+def train(args):
 
     print("Getting train data...")
-    train_data_path = osp.join(osp.dirname(data.__file__), "forest-biomass")
-    train_data_path = r"\\DESKTOP-P8NCSTN\Epoch\forestbiomass\data\converted"
-    with open(osp.join(osp.dirname(data.__file__), 'patch_names'), newline='') as f:
-        reader = csv.reader(f)
-        patch_name_data = list(reader)
-    patch_names = patch_name_data[0]
 
-    train_dataset, number_of_channels = prepare_dataset(patch_names, train_data_path)
+    train_dataset, number_of_channels = prepare_dataset(args)
 
-    train_size = int(training_fraction * len(train_dataset))
+    train_size = int(1 - args.validation_fraction * len(train_dataset))
     valid_size = len(train_dataset) - train_size
 
     train_set, val_set = torch.utils.data.random_split(train_dataset, [train_size, valid_size])
 
-    train_dataloader = DataLoader(train_set, batch_size=batch_size, shuffle=True, num_workers=12)
-    valid_dataloader = DataLoader(val_set, batch_size=batch_size, shuffle=False, num_workers=12)
+    train_dataloader = DataLoader(train_set, batch_size=args.batch_size, shuffle=True, num_workers=args.dataloader_workers)
+    valid_dataloader = DataLoader(val_set, batch_size=args.batch_size, shuffle=False, num_workers=args.dataloader_workers)
 
-    base_model = select_segmenter(segmenter_name, encoder_name, number_of_channels)
+    base_model = select_segmenter(args.segmenter_name, args.encoder_name, number_of_channels)
 
     pre_trained_weights_dir_path = osp.join(osp.dirname(data.__file__), "pre-trained_weights")
 
-    if osp.exists(osp.join(pre_trained_weights_dir_path, f"{encoder_name}.pt")):
-        pre_trained_weights_path = osp.join(pre_trained_weights_dir_path, f"{encoder_name}.pt")
+    if osp.exists(osp.join(pre_trained_weights_dir_path, f"{args.encoder_name}.pt")):
+        pre_trained_weights_path = osp.join(pre_trained_weights_dir_path, f"{args.encoder_name}.pt")
     else:
         pre_trained_weights_path = None
 
@@ -203,16 +175,16 @@ def train(segmenter_name, encoder_name, epochs, training_fraction, batch_size=8,
 
     s2_model = Sentinel2Model(base_model)
 
-    logger = TensorBoardLogger("tb_logs", name=f"{segmenter_name}_{encoder_name}")
+    logger = TensorBoardLogger("tb_logs", name=args.model_identifier)
 
     trainer = Trainer(
         accelerator="gpu",
         devices=1,
-        max_epochs=epochs,
+        max_epochs=args.epochs,
         logger=[logger],
         log_every_n_steps=5,
     )
-    # Train the model ⚡
+
     trainer.fit(s2_model, train_dataloaders=train_dataloader, val_dataloaders=valid_dataloader)
 
     return s2_model
@@ -258,7 +230,7 @@ def load_model(segmenter_name, encoder_name, number_of_channels, version=None):
 def loading_example():
     model = load_model("Unet", "resnet50", 10)
 
-    example_path = osp.join(osp.dirname(data.__file__), "forest-biomass", "2d977c85", "0", "S2")
+    example_path = osp.join(osp.dirname(data.__file__), "converted", "2d977c85", "0", "S2")
 
     collected_bands = []
 
@@ -339,6 +311,86 @@ def create_submissions():
             print(f"{index} / {total}")
 
 
+def set_args():
+
+    model_segmenter = "Unet"
+    model_encoder = "efficientnet-b7"
+    epochs = 20
+    learning_rate = 1e-4
+    dataloader_workers = 6
+    validation_fraction = 0.2
+    batch_size = 8
+
+    sentinel_1_bands = {
+        "VV ascending": 0,
+        "VH ascending": 0,
+        "VV descending": 0,
+        "VH descending": 0
+    }
+
+    sentinel_2_bands = {
+        "B2-Blue": 1,
+        "B3-Green": 1,
+        "B4-Red": 1,
+        "B5-Veg red edge 1": 1,
+        "B6-Veg red edge 2": 1,
+        "B7-Veg red edge 3": 1,
+        "B8-NIR": 1,
+        "B8A-Narrow NIR": 1,
+        "B11-SWIR 1": 1,
+        "B12-SWIR 2": 1,
+        "Cloud probability": 0
+    }
+
+    s1_list = list(sentinel_1_bands.values())
+    s2_list = list(sentinel_2_bands.values())
+
+    s1_bands_indicator = "S1-" + ''.join(str(x) for x in s1_list)
+    s2_bands_indicator = "S2-" + ''.join(str(x) for x in s2_list)
+
+    parser = argparse.ArgumentParser()
+
+    model_identifier = f"{model_segmenter}_{model_encoder}_{s1_bands_indicator}_{s2_bands_indicator}"
+    parser.add_argument('--model_identifier', default=model_identifier, type=str)
+    parser.add_argument('--segmenter_name', default=model_segmenter, type=str)
+    parser.add_argument('--encoder_name', default=model_encoder, type=str)
+
+    data_path = osp.dirname(data.__file__)
+    models_path = osp.dirname(models.__file__)
+    parser.add_argument('--training_features_path', default=str(osp.join(data_path, "converted")), type=str)
+    parser.add_argument('--training_ids_path', default=str(osp.join(data_path, "patch_names")), type=str)
+    parser.add_argument('--testing_features_path', default=str(osp.join(data_path, "testing_converted")), type=str)
+    parser.add_argument('--testing_ids_path', default=str(osp.join(data_path, "test_patch_names")), type=str)
+    parser.add_argument('--current_model_path', default=str(osp.join(models_path, model_identifier)), type=str)
+
+    parser.add_argument('--dataloader_workers', default=dataloader_workers, type=int)
+    parser.add_argument('--batch_size', default=batch_size, type=int)
+    parser.add_argument('--epochs', default=epochs, type=int)
+    parser.add_argument('--learning_rate', default=learning_rate, type=float)
+    parser.add_argument('--validation_fraction', default=validation_fraction, type=float)
+
+    parser.add_argument('--S1_band_selection', default=s1_list, type=list)
+    parser.add_argument('--S2_band_selection', default=s2_list, type=list)
+
+    args = parser.parse_args()
+
+    print('=' * 30)
+    for arg in vars(args):
+        print('--', arg, ':', getattr(args, arg))
+    print('=' * 30)
+
+    return args
+
 if __name__ == '__main__':
-    create_submissions()
+    args = set_args()
+
+    print(args.epochs)
+
+    #create_submissions()
     #train("Unet", "efficientnet-b7", 100 , 0.8)
+
+    # No more bad paths
+    # Maybe more functions
+    # Related code closer together
+    # Review whitespace usage
+    # Class names

@@ -107,6 +107,6 @@ def get_data_for_segmenter(patch_names, train_data_path):
     return np.array(X_all), np.array(y_all)
 
 # import data
-# train_data_path = osp.join(osp.dirname(data.__file__), "forest-biomass")
+# train_data_path = osp.join(osp.dirname(data.__file__), "converted")
 #
 # print(get_data_for_segmenter(["0c1dea12", "0d129e66"], train_data_path)[0][0][0])

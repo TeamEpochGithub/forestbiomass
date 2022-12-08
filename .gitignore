@@ -1,7 +1,7 @@
 .idea
 data/imgs
 data/converted
-data/forest-biomass
+data/converted
 models/vit_checkpoints
 
 # Byte-compiled / optimized / DLL files

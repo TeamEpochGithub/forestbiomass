@@ -178,7 +178,7 @@ if __name__ == '__main__':
     mlp_head_units = [4096, 2048, 1024]  # [2048, 1024]  # Size of the dense layers of the final classifier
 
     print("Getting train data...")
-    train_data_path = osp.join(osp.dirname(data.__file__), "forest-biomass")
+    train_data_path = osp.join(osp.dirname(data.__file__), "converted")
     with open(osp.join(osp.dirname(data.__file__), 'patch_names'), newline='') as f:
         reader = csv.reader(f)
         patch_name_data = list(reader)
