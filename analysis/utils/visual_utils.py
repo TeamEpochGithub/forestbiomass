@@ -12,6 +12,31 @@ import csv
 import data
 from osgeo import gdal  # https://opensourceoptions.com/blog/how-to-install-gdal-for-python-with-pip-on-windows/
 
+def visualize_all_bands_patch(patch_name, train_data_path):
+    months = []
+    for month in range(0, 12):
+        bands = []
+        for band in range(0, 11):
+            try:
+                patch_data = np.load(osp.join(train_data_path, patch_name, str(month), "S2", f"{band}.npy"), allow_pickle=True)
+                bands.append(patch_data)
+            except IOError as e:
+                bands.append(np.full((256, 256), -6666))
+
+        months.append(bands)
+
+    columns = 11
+    rows = 12
+    fig = plt.figure(figsize=(8, 8))
+    c = 1
+    for month in months:
+        for band in month:
+            fig.add_subplot(rows, columns, c)
+            plt.imshow(band)
+            # plt.colorbar()
+            plt.axis("off")
+            c += 1
+    plt.show()
 
 def plot_pred_and_label(pred, label, score, patch_name):
     plt.subplot(2, 2, 1)

@@ -103,48 +103,45 @@ class Sentinel2Model(pl.LightningModule):
         return loss
 
 
-def prepare_dataset(args):
-
-    with open(args.training_ids_path, newline='') as f:
+def prepare_dataset(training_ids_path, training_features_path, S1_band_selection, S2_band_selection):
+    with open(training_ids_path, newline='') as f:
         reader = csv.reader(f)
         patch_name_data = list(reader)
     patch_names = patch_name_data[0]
+    patch_names = patch_names[0:500]
 
     patch_month_non_missing = []
-
     for patch in patch_names:
-
         for month in range(0, 12):
-            month_patch_path = osp.join(args.training_features_path, patch, str(month))
 
+            month_patch_path = osp.join(training_features_path, patch, str(month))
             if osp.exists(osp.join(month_patch_path, "S2")):
                 patch_month_non_missing.append((patch, str(month)))
 
-    new_dataset = SegmentationDatasetMaker(args.training_features_path, patch_month_non_missing, args.S1_band_selection, args.S2_band_selection)
-    return new_dataset, (args.S1_band_selection.count(1) + args.S2_band_selection.count(1))
+    new_dataset = SegmentationDatasetMaker(training_features_path, patch_month_non_missing, S1_band_selection,
+                                           S2_band_selection)
+    return new_dataset, (S1_band_selection.count(1) + S2_band_selection.count(1))
 
 
 def select_segmenter(segmenter_name, encoder_name, number_of_channels):
-    if segmenter_name == "Unet":
 
+    if segmenter_name == "Unet":
         base_model = smp.Unet(
             encoder_name=encoder_name,
             in_channels=number_of_channels,
             classes=1
         )
-
     else:
         base_model = None
 
     assert base_model is not None, "Segmenter name was not recognized."
-
     return base_model
 
 
 def create_tensor(band_list):
     band_list = np.asarray(band_list, dtype=np.float32)
-
-    band_tensor = torch.tensor(band_list)
+    band_clipped = np.clip(band_list, 0, 3000)
+    band_tensor = torch.tensor(band_clipped)
     band_tensor = (band_tensor.permute(1, 2, 0) - band_tensor.mean(dim=(1, 2))) / (band_tensor.std(dim=(1, 2)) + 0.01)
     band_tensor = band_tensor.permute(2, 0, 1)
 
@@ -152,18 +149,19 @@ def create_tensor(band_list):
 
 
 def train(args):
-
     print("Getting train data...")
 
-    train_dataset, number_of_channels = prepare_dataset(args)
+    train_dataset, number_of_channels = prepare_dataset(args.training_ids_path, args.training_features_path, args.S1_band_selection, args.S2_band_selection)
 
     train_size = int(1 - args.validation_fraction * len(train_dataset))
     valid_size = len(train_dataset) - train_size
 
     train_set, val_set = torch.utils.data.random_split(train_dataset, [train_size, valid_size])
 
-    train_dataloader = DataLoader(train_set, batch_size=args.batch_size, shuffle=True, num_workers=args.dataloader_workers)
-    valid_dataloader = DataLoader(val_set, batch_size=args.batch_size, shuffle=False, num_workers=args.dataloader_workers)
+    train_dataloader = DataLoader(train_set, batch_size=args.batch_size, shuffle=True,
+                                  num_workers=args.dataloader_workers)
+    valid_dataloader = DataLoader(val_set, batch_size=args.batch_size, shuffle=False,
+                                  num_workers=args.dataloader_workers)
 
     base_model = select_segmenter(args.segmenter_name, args.encoder_name, number_of_channels)
 
@@ -202,7 +200,6 @@ def train(args):
 
 
 def load_model(args):
-
     print("Getting saved model...")
 
     assert osp.exists(args.current_model_path) is True, "requested model does not exist"
@@ -214,7 +211,8 @@ def load_model(args):
     latest_checkpoint_name = list(os.scandir(checkpoint_dir_path))[-1]
     latest_checkpoint_path = osp.join(checkpoint_dir_path, latest_checkpoint_name)
 
-    base_model = select_segmenter(args.segmenter_name, args.encoder_name, (args.S1_band_selection.count(1) + args.S2_band_selection.count(1)))
+    base_model = select_segmenter(args.segmenter_name, args.encoder_name,
+                                  (args.S1_band_selection.count(1) + args.S2_band_selection.count(1)))
 
     pre_trained_weights_dir_path = osp.join(osp.dirname(data.__file__), "pre-trained_weights")
 
@@ -289,8 +287,8 @@ def create_predictions(args):
 
     return predictions
 
-def create_submissions(args):
 
+def create_submissions(args):
     model = load_model(args)
     test_data_path = args.testing_features_path
 
@@ -352,18 +350,18 @@ def create_submissions(args):
 
     return predictions
 
-def set_args():
 
+def set_args():
     model_segmenter = "Unet"
     model_encoder = "efficientnet-b7"
-    epochs = 5
+    epochs = 100
     learning_rate = 1e-4
     dataloader_workers = 6
     validation_fraction = 0.2
-    batch_size = 2
-    log_step_frequency = 10
+    batch_size = 8
+    log_step_frequency = 500
     version = -1  # Keep -1 if loading the latest model version.
-    save_top_k_checkpoints = 3
+    save_top_k_checkpoints = 5
 
     sentinel_1_bands = {
         "VV ascending": 0,
@@ -402,11 +400,12 @@ def set_args():
 
     data_path = osp.dirname(data.__file__)
     models_path = osp.dirname(models.__file__)
-    parser.add_argument('--training_features_path', default=str(osp.join(data_path, "converted")), type=str)
+    parser.add_argument('--training_features_path', default=str(osp.join(data_path, "forest-biomass")), type=str)
     parser.add_argument('--training_ids_path', default=str(osp.join(data_path, "patch_names")), type=str)
-    parser.add_argument('--testing_features_path', default=str(osp.join(data_path, "testing_converted")), type=str)
+    parser.add_argument('--testing_features_path', default=str(osp.join(data_path, "forest-biomass-test")), type=str)
     parser.add_argument('--testing_ids_path', default=str(osp.join(data_path, "test_patch_names")), type=str)
-    parser.add_argument('--current_model_path', default=str(osp.join(models_path, "tb_logs", model_identifier)), type=str)
+    parser.add_argument('--current_model_path', default=str(osp.join(models_path, "tb_logs", model_identifier)),
+                        type=str)
     parser.add_argument('--submission_folder_path', default=str(osp.join(data_path, "imgs", "test_agbm")), type=str)
 
     parser.add_argument('--dataloader_workers', default=dataloader_workers, type=int)
@@ -429,11 +428,12 @@ def set_args():
 
     return args
 
+
 if __name__ == '__main__':
     args = set_args()
 
     train(args)
-    #create_submissions(args)
+    # create_submissions(args)
 
     # No more bad paths
     # Maybe more functions
