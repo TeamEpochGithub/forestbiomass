@@ -20,6 +20,7 @@ import data
 import models
 import csv
 import argparse
+from models.utils import loss_functions
 
 warnings.filterwarnings("ignore", category=rasterio.errors.NotGeoreferencedWarning)
 
@@ -65,25 +66,24 @@ class Segmentation_Dataset_Maker(Dataset):
 
 
 class Sentinel2Model(pl.LightningModule):
-    def __init__(self, model, learning_rate):
+    def __init__(self, model, learning_rate, loss_function):
         super().__init__()
         self.model = model
         self.learning_rate = learning_rate
+        self.loss_function = loss_function
 
     def training_step(self, batch, batch_idx):
         x, y = batch
         y_hat = self.model(x)
-        loss = F.mse_loss(y_hat, y)
+        loss = self.loss_function(y_hat, y)
         self.log("train/loss", loss)
-        self.log("train/rmse", torch.sqrt(loss))
         return loss
 
     def validation_step(self, batch, batch_idx):
         x, y = batch
         y_hat = self.model(x)
-        loss = F.mse_loss(y_hat, y)
+        loss = self.loss_function(y_hat, y)
         self.log("train/loss", loss)
-        self.log("train/rmse", torch.sqrt(loss))
         return loss
 
     def configure_optimizers(self):
@@ -116,13 +116,15 @@ def prepare_dataset(args):
     return new_dataset, (args.S1_band_selection.count(1) + args.S2_band_selection.count(1))
 
 
-def select_segmenter(segmenter_name, encoder_name, number_of_channels):
+def select_segmenter(args):
 
-    if segmenter_name == "Unet":
+    channel_count = (args.S1_band_selection.count(1) + args.S2_band_selection.count(1))
+
+    if args.segmenter_name == "Unet":
 
         base_model = smp.Unet(
-            encoder_name=encoder_name,
-            in_channels=number_of_channels,
+            encoder_name=args.encoder_name,
+            in_channels=channel_count,
             classes=1
         )
 
@@ -159,7 +161,7 @@ def train(args):
     train_dataloader = DataLoader(train_set, batch_size=args.batch_size, shuffle=True, num_workers=args.dataloader_workers)
     valid_dataloader = DataLoader(val_set, batch_size=args.batch_size, shuffle=False, num_workers=args.dataloader_workers)
 
-    base_model = select_segmenter(args.segmenter_name, args.encoder_name, number_of_channels)
+    base_model = select_segmenter(args)
 
     pre_trained_weights_dir_path = osp.join(osp.dirname(data.__file__), "pre-trained_weights")
 
@@ -171,13 +173,13 @@ def train(args):
     if pre_trained_weights_path is not None:
         base_model.encoder.load_state_dict(torch.load(pre_trained_weights_path))
 
-    model = Sentinel2Model(model=base_model, learning_rate=args.learning_rate)
+    model = Sentinel2Model(model=base_model, learning_rate=args.learning_rate, loss_function=args.loss_function)
 
     logger = TensorBoardLogger("tb_logs", name=args.model_identifier)
 
     checkpoint_callback = ModelCheckpoint(
         save_top_k=args.save_top_k_checkpoints,
-        monitor="train/rmse",
+        monitor="train/loss",
         mode="min",
     )
 
@@ -211,7 +213,7 @@ def load_model(args):
 
     latest_checkpoint_path = osp.join(checkpoint_dir_path, latest_checkpoint_name)
 
-    base_model = select_segmenter(args.segmenter_name, args.encoder_name, (args.S1_band_selection.count(1) + args.S2_band_selection.count(1)))
+    base_model = select_segmenter(args)
 
     pre_trained_weights_dir_path = osp.join(osp.dirname(data.__file__), "pre-trained_weights")
 
@@ -223,7 +225,7 @@ def load_model(args):
     if pre_trained_weights_path is not None:
         base_model.encoder.load_state_dict(torch.load(pre_trained_weights_path))
 
-    model = Sentinel2Model(model=base_model, learning_rate=args.learning_rate)
+    model = Sentinel2Model(model=base_model, learning_rate=args.learning_rate, loss_function=args.loss_function)
 
     checkpoint = torch.load(str(latest_checkpoint_path))
     model.load_state_dict(checkpoint["state_dict"])
@@ -310,6 +312,7 @@ def set_args():
     log_step_frequency = 10
     version = -1  # Keep -1 if loading the latest model version.
     save_top_k_checkpoints = 3
+    loss_function = loss_functions.logit_binary_cross_entropy_loss
 
     sentinel_1_bands = {
         "VV ascending": 0,
@@ -365,6 +368,7 @@ def set_args():
 
     parser.add_argument('--S1_band_selection', default=s1_list, type=list)
     parser.add_argument('--S2_band_selection', default=s2_list, type=list)
+    parser.add_argument('--loss_function', default=loss_function)
 
     args = parser.parse_args()
 
@@ -377,12 +381,6 @@ def set_args():
 
 if __name__ == '__main__':
     args = set_args()
-
     train(args)
-    #create_submissions(args)
 
-    # No more bad paths
-    # Maybe more functions
-    # Related code closer together
-    # Review whitespace usage
-    # Class names
+    #create_submissions(args)
