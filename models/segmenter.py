@@ -98,14 +98,15 @@ class Sentinel2Model(pl.LightningModule):
         loss = torch.sqrt(criterion(x, y) + eps)
         return loss
 
+
 def prepare_dataset(patch_names, train_data_path):
     # Change value to 1 to include band during training:
 
     sentinel_1_bands = {
-        "VV ascending": 1,
-        "VH ascending": 1,
-        "VV descending": 1,
-        "VH descending": 1
+        "VV ascending": 0,
+        "VH ascending": 0,
+        "VV descending": 0,
+        "VH descending": 0
     }
 
     sentinel_2_bands = {
@@ -168,8 +169,8 @@ def create_tensor(band_list):
     return band_tensor.unsqueeze(0)
 
 
-def train(segmenter_name, encoder_name, epochs, training_fraction, batch_size=8, dataloader_workers=6, accelerator="gpu"):
-
+def train(segmenter_name, encoder_name, epochs, training_fraction, batch_size=8, dataloader_workers=6,
+          accelerator="gpu"):
     print("Getting train data...")
     train_data_path = osp.join(osp.dirname(data.__file__), "forest-biomass")
     # train_data_path = r"\\DESKTOP-P8NCSTN\Epoch\forestbiomass\data\converted"
@@ -253,19 +254,6 @@ def load_model(segmenter_name, encoder_name, number_of_channels, version=None):
     return s2_model
 
 
-def predict(model, patch, month, satellite):
-    predict_patch_path = osp.join(osp.dirname(data.__file__), "forest-biomass", patch, month, satellite)
-
-    collected_bands = []
-    for i in range(0, 10):
-        collected_bands.append(np.load(osp.join(predict_patch_path, f"{i}.npy"), allow_pickle=True))
-
-    model_input = create_tensor(collected_bands)
-
-    prediction = model(model_input).cpu().squeeze().detach().numpy()
-    return prediction
-
-
 def loading_example():
     model = load_model("Unet", "resnet50", 10)
 
@@ -284,9 +272,17 @@ def loading_example():
     plt.show()
 
 
-def create_submissions():
+def create_predictions_tif(model):
+    nps = create_predictions(model)
 
-    model = load_model("Unet", "efficientnet-b7", 14)
+    for agbm_arr in nps:
+        test_agbm_path = osp.join(osp.dirname(data.__file__), "imgs", "test_agbm", f"{id}_agbm.tif")
+
+        im = Image.fromarray(agbm_arr)
+        im.save(test_agbm_path)
+
+
+def create_predictions(model):
     test_data_path = osp.join(osp.dirname(data.__file__), "forest-biomass-test")
 
     with open(osp.join(osp.dirname(data.__file__), 'test_patch_names'), newline='') as f:
@@ -294,34 +290,32 @@ def create_submissions():
         patch_name_data = list(reader)
     patch_names = patch_name_data[0]
 
-    total = len(patch_names)
-
-    for index, id in enumerate(patch_names):
+    predictions = []
+    for index, patch_name in enumerate(patch_names):
 
         all_months = []
 
         for month in range(0, 12):
 
-            s1_folder_path = osp.join(test_data_path, id, f"{month:02}", "S1")
-            s2_folder_path = osp.join(test_data_path, id, f"{month:02}", "S2")
+            s1_folder_path = osp.join(test_data_path, patch_name, f"{month:02}", "S1")
+            s2_folder_path = osp.join(test_data_path, patch_name, f"{month:02}", "S2")
 
             if osp.exists(s2_folder_path):
 
                 all_bands = []
 
                 for s1_index in range(0, 4):
-
                     band = np.load(osp.join(s1_folder_path, f"{s1_index}.npy"), allow_pickle=True)
                     all_bands.append(band)
 
                 for s2_index in range(0, 10):
-
                     band = np.load(osp.join(s2_folder_path, f"{s2_index}.npy"), allow_pickle=True)
                     all_bands.append(band)
 
                 input_tensor = torch.tensor(np.asarray(all_bands, dtype=np.float32))
 
-                input_tensor = (input_tensor.permute(1, 2, 0) - input_tensor.mean(dim=(1, 2))) / (input_tensor.std(dim=(1, 2)) + 0.01)
+                input_tensor = (input_tensor.permute(1, 2, 0) - input_tensor.mean(dim=(1, 2))) / (
+                        input_tensor.std(dim=(1, 2)) + 0.01)
                 input_tensor = input_tensor.permute(2, 0, 1)
                 input_tensor = input_tensor.unsqueeze(0)
 
@@ -332,19 +326,17 @@ def create_submissions():
                 all_months.append(pred)
 
         count = len(all_months)
+        prediction = np.asarray(sum(all_months) / count)
+        predictions.append(prediction)
 
-        agbm_arr = np.asarray(sum(all_months) / count)
-
-        test_agbm_path = osp.join(osp.dirname(data.__file__), "imgs", "test_agbm", f"{id}_agbm.tif")
-
-        im = Image.fromarray(agbm_arr)
-        im.save(test_agbm_path)
-
+        total = len(patch_names)
         if index % 100 == 0:
             print(f"{index} / {total}")
 
+    return predictions
 
 
 if __name__ == '__main__':
-    create_submissions()
-    # train("Unet", "efficientnet-b7", 40, 0.8, accelerator="gpu")
+    # create_submissions()
+    train("Unet", "efficientnet-b7", 20, 0.8, accelerator="gpu")
+    # model = load_model("Unet", "resnet50", 10)
