@@ -174,7 +174,6 @@ if __name__ == '__main__':
     # Create model
     model = create_model(base_model, base_weights)
     # Get patch names to feed in data generator.
-    # model = create_model_test(base_weights)
     patch_names = get_patch_names()
     datagen = DataGeneratorNpy(patch_names)
     # Use data generator to fit on model
