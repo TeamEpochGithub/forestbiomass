@@ -4,6 +4,7 @@ from PIL import Image
 from matplotlib import pyplot as plt
 from torch.utils.data import Dataset, DataLoader
 import torch.nn.functional as F
+from torch import distributed as dist
 import segmentation_models_pytorch as smp
 import os
 import rasterio
@@ -13,10 +14,12 @@ import warnings
 import numpy as np
 import os.path as osp
 from pytorch_lightning.loggers import TensorBoardLogger
+from pytorch_lightning.callbacks import ModelCheckpoint
 import data
 import models
 import csv
 from pytorch_lightning.strategies import DDPStrategy
+import argparse
 
 warnings.filterwarnings("ignore", category=rasterio.errors.NotGeoreferencedWarning)
 
@@ -54,11 +57,7 @@ class SegmentationDatasetMaker(Dataset):
                 band = np.load(osp.join(self.training_data_path, id, month, "S2", f"{index}.npy"), allow_pickle=True)
                 arr_list.append(band)
 
-        data_tensor = torch.tensor(np.asarray(arr_list, dtype=np.float32))
-
-        data_tensor = (data_tensor.permute(1, 2, 0) - data_tensor.mean(dim=(1, 2))) / (
-                data_tensor.std(dim=(1, 2)) + 0.01)
-        data_tensor = data_tensor.permute(2, 0, 1)
+        data_tensor = create_tensor(arr_list)
 
         if self.transform:
             data_tensor = self.transform(data_tensor)
@@ -67,26 +66,31 @@ class SegmentationDatasetMaker(Dataset):
 
 
 class Sentinel2Model(pl.LightningModule):
-    def __init__(self, model):
+    def __init__(self, model, learning_rate):
         super().__init__()
         self.model = model
+        self.learning_rate = learning_rate
 
     def training_step(self, batch, batch_idx):
         x, y = batch
         y_hat = self.model(x)
-        # loss = F.mse_loss(y_hat, y)
+        loss = F.mse_loss(y_hat, y)
+        self.log("train/loss", loss)
+        self.log("train/rmse", torch.sqrt(loss))
         loss = self.rmse_loss(y_hat, y)
         return loss
 
     def validation_step(self, batch, batch_idx):
         x, y = batch
         y_hat = self.model(x)
-        # loss = F.mse_loss(y_hat, y)
+        loss = F.mse_loss(y_hat, y)
+        self.log("train/loss", loss)
+        self.log("train/rmse", torch.sqrt(loss))
         loss = self.rmse_loss(y_hat, y)
         return loss
 
     def configure_optimizers(self):
-        return [torch.optim.Adam(self.parameters(), lr=0.0001)]
+        return [torch.optim.Adam(self.parameters(), lr=self.learning_rate)]
 
     def forward(self, x):
         return self.model(x)
@@ -99,47 +103,25 @@ class Sentinel2Model(pl.LightningModule):
         return loss
 
 
-def prepare_dataset(patch_names, train_data_path):
-    # Change value to 1 to include band during training:
+def prepare_dataset(args):
 
-    sentinel_1_bands = {
-        "VV ascending": 0,
-        "VH ascending": 0,
-        "VV descending": 0,
-        "VH descending": 0
-    }
-
-    sentinel_2_bands = {
-        "B2-Blue": 1,
-        "B3-Green": 1,
-        "B4-Red": 1,
-        "B5-Veg red edge 1": 1,
-        "B6-Veg red edge 2": 1,
-        "B7-Veg red edge 3": 1,
-        "B8-NIR": 1,
-        "B8A-Narrow NIR": 1,
-        "B11-SWIR 1": 1,
-        "B12-SWIR 2": 1,
-        "Cloud probability": 0
-    }
-
-    s1_list = list(sentinel_1_bands.values())
-    s2_list = list(sentinel_2_bands.values())
-
-    number_of_channels = s1_list.count(1) + s2_list.count(1)
+    with open(args.training_ids_path, newline='') as f:
+        reader = csv.reader(f)
+        patch_name_data = list(reader)
+    patch_names = patch_name_data[0]
 
     patch_month_non_missing = []
 
     for patch in patch_names:
 
         for month in range(0, 12):
-            month_patch_path = osp.join(train_data_path, patch, str(month))
+            month_patch_path = osp.join(args.training_features_path, patch, str(month))
 
             if osp.exists(osp.join(month_patch_path, "S2")):
                 patch_month_non_missing.append((patch, str(month)))
 
-    new_dataset = SegmentationDatasetMaker(train_data_path, patch_month_non_missing, s1_list, s2_list)
-    return new_dataset, number_of_channels
+    new_dataset = SegmentationDatasetMaker(args.training_features_path, patch_month_non_missing, args.S1_band_selection, args.S2_band_selection)
+    return new_dataset, (args.S1_band_selection.count(1) + args.S2_band_selection.count(1))
 
 
 def select_segmenter(segmenter_name, encoder_name, number_of_channels):
@@ -166,126 +148,153 @@ def create_tensor(band_list):
     band_tensor = (band_tensor.permute(1, 2, 0) - band_tensor.mean(dim=(1, 2))) / (band_tensor.std(dim=(1, 2)) + 0.01)
     band_tensor = band_tensor.permute(2, 0, 1)
 
-    return band_tensor.unsqueeze(0)
+    return band_tensor
 
 
-def train(segmenter_name, encoder_name, epochs, training_fraction, batch_size=8, dataloader_workers=6,
-          accelerator="gpu"):
+def train(args):
+
     print("Getting train data...")
-    train_data_path = osp.join(osp.dirname(data.__file__), "forest-biomass")
-    # train_data_path = r"\\DESKTOP-P8NCSTN\Epoch\forestbiomass\data\converted"
-    with open(osp.join(osp.dirname(data.__file__), 'patch_names'), newline='') as f:
-        reader = csv.reader(f)
-        patch_name_data = list(reader)
-    patch_names = patch_name_data[0]
 
-    train_dataset, number_of_channels = prepare_dataset(patch_names, train_data_path)
+    train_dataset, number_of_channels = prepare_dataset(args)
 
-    train_size = int(training_fraction * len(train_dataset))
+    train_size = int(1 - args.validation_fraction * len(train_dataset))
     valid_size = len(train_dataset) - train_size
 
     train_set, val_set = torch.utils.data.random_split(train_dataset, [train_size, valid_size])
 
-    train_dataloader = DataLoader(train_set, batch_size=batch_size, shuffle=True, num_workers=dataloader_workers)
-    valid_dataloader = DataLoader(val_set, batch_size=batch_size, shuffle=False, num_workers=dataloader_workers)
+    train_dataloader = DataLoader(train_set, batch_size=args.batch_size, shuffle=True, num_workers=args.dataloader_workers)
+    valid_dataloader = DataLoader(val_set, batch_size=args.batch_size, shuffle=False, num_workers=args.dataloader_workers)
 
-    base_model = select_segmenter(segmenter_name, encoder_name, number_of_channels)
+    base_model = select_segmenter(args.segmenter_name, args.encoder_name, number_of_channels)
 
     pre_trained_weights_dir_path = osp.join(osp.dirname(data.__file__), "pre-trained_weights")
-    if osp.exists(osp.join(pre_trained_weights_dir_path, f"{encoder_name}.pt")):
-        pre_trained_weights_path = osp.join(pre_trained_weights_dir_path, f"{encoder_name}.pt")
+
+    if osp.exists(osp.join(pre_trained_weights_dir_path, f"{args.encoder_name}.pt")):
+        pre_trained_weights_path = osp.join(pre_trained_weights_dir_path, f"{args.encoder_name}.pt")
     else:
         pre_trained_weights_path = None
 
     if pre_trained_weights_path is not None:
         base_model.encoder.load_state_dict(torch.load(pre_trained_weights_path))
 
-    s2_model = Sentinel2Model(base_model)
+    model = Sentinel2Model(model=base_model, learning_rate=args.learning_rate)
 
-    logger = TensorBoardLogger("tb_logs", name=f"{segmenter_name}_{encoder_name}")
+    logger = TensorBoardLogger("tb_logs", name=args.model_identifier)
 
-    ddp = DDPStrategy(process_group_backend="gloo")
-    trainer = Trainer(
-        strategy=ddp,
-        accelerator=accelerator,
-        devices=2,
-        max_epochs=epochs,
-        logger=[logger],
-        log_every_n_steps=100,
-        num_sanity_val_steps=0,
+    checkpoint_callback = ModelCheckpoint(
+        save_top_k=args.save_top_k_checkpoints,
+        monitor="train/rmse",
+        mode="min",
     )
 
-    # Train the model ⚡
-    trainer.fit(s2_model, train_dataloaders=train_dataloader, val_dataloaders=valid_dataloader)
+    trainer = Trainer(
+        accelerator="gpu",
+        devices=1,
+        max_epochs=args.epochs,
+        logger=[logger],
+        log_every_n_steps=args.log_step_frequency,
+        callbacks=[checkpoint_callback]
+    )
 
-    return s2_model
+    trainer.fit(model, train_dataloaders=train_dataloader, val_dataloaders=valid_dataloader)
+
+    return model
 
 
-def load_model(segmenter_name, encoder_name, number_of_channels, version=None):
+def load_model(args):
+
     print("Getting saved model...")
 
-    log_folder_path = osp.join(osp.dirname(models.__file__), "tb_logs", f"{segmenter_name}_{encoder_name}")
+    assert osp.exists(args.current_model_path) is True, "requested model does not exist"
+    log_folder_path = args.current_model_path
 
-    if version is None:
-        version_dir = list(os.scandir(log_folder_path))[-1]
-    else:
-        version_dir = list(os.scandir(log_folder_path))[version]
+    version_dir = list(os.scandir(log_folder_path))[args.model_version]
 
     checkpoint_dir_path = osp.join(log_folder_path, version_dir, "checkpoints")
     latest_checkpoint_name = list(os.scandir(checkpoint_dir_path))[-1]
     latest_checkpoint_path = osp.join(checkpoint_dir_path, latest_checkpoint_name)
 
-    base_model = select_segmenter(segmenter_name, encoder_name, number_of_channels)
+    base_model = select_segmenter(args.segmenter_name, args.encoder_name, (args.S1_band_selection.count(1) + args.S2_band_selection.count(1)))
+
     pre_trained_weights_dir_path = osp.join(osp.dirname(data.__file__), "pre-trained_weights")
 
-    if osp.exists(osp.join(pre_trained_weights_dir_path, f"{encoder_name}.pt")):
-        pre_trained_weights_path = osp.join(pre_trained_weights_dir_path, f"{encoder_name}.pt")
+    if osp.exists(osp.join(pre_trained_weights_dir_path, f"{args.encoder_name}.pt")):
+        pre_trained_weights_path = osp.join(pre_trained_weights_dir_path, f"{args.encoder_name}.pt")
     else:
         pre_trained_weights_path = None
 
     if pre_trained_weights_path is not None:
         base_model.encoder.load_state_dict(torch.load(pre_trained_weights_path))
 
-    s2_model = Sentinel2Model(base_model)
+    model = Sentinel2Model(model=base_model, learning_rate=args.learning_rate)
 
-    checkpoint = torch.load(latest_checkpoint_path)
-    s2_model.load_state_dict(checkpoint["state_dict"])
+    checkpoint = torch.load(str(latest_checkpoint_path))
+    model.load_state_dict(checkpoint["state_dict"])
 
-    return s2_model
-
-
-def loading_example():
-    model = load_model("Unet", "resnet50", 10)
-
-    example_path = osp.join(osp.dirname(data.__file__), "forest-biomass", "2d977c85", "0", "S2")
-
-    collected_bands = []
-
-    for i in range(0, 10):
-        collected_bands.append(np.load(osp.join(example_path, f"{i}.npy"), allow_pickle=True))
-
-    model_input = create_tensor(collected_bands)
-
-    prediction = model(model_input)
-
-    plt.imshow(prediction.cpu().squeeze().detach().numpy(), interpolation='nearest')
-    plt.show()
+    return model
 
 
-def create_predictions_tif(model):
-    nps = create_predictions(model)
+def create_predictions(args):
+    model = load_model(args)
+    test_data_path = args.testing_features_path
 
-    for agbm_arr in nps:
-        test_agbm_path = osp.join(osp.dirname(data.__file__), "imgs", "test_agbm", f"{id}_agbm.tif")
+    with open(args.testing_ids_path, newline='') as f:
+        reader = csv.reader(f)
+        patch_name_data = list(reader)
+    patch_names = patch_name_data[0]
 
-        im = Image.fromarray(agbm_arr)
-        im.save(test_agbm_path)
+    total = len(patch_names)
 
+    predictions = []
+    for index, id in enumerate(patch_names):
 
-def create_predictions(model):
-    test_data_path = osp.join(osp.dirname(data.__file__), "forest-biomass-test")
+        all_months = []
 
-    with open(osp.join(osp.dirname(data.__file__), 'test_patch_names'), newline='') as f:
+        for month in range(0, 12):
+
+            s1_folder_path = osp.join(test_data_path, id, f"{month:02}", "S1")
+            s2_folder_path = osp.join(test_data_path, id, f"{month:02}", "S2")
+
+            if osp.exists(s2_folder_path):
+
+                all_bands = []
+
+                for s1_index in range(0, 4):
+
+                    if args.S1_band_selection[s1_index] == 1:
+                        band = np.load(osp.join(s1_folder_path, f"{s1_index}.npy"), allow_pickle=True)
+                        all_bands.append(band)
+
+                for s2_index in range(0, 10):
+
+                    if args.S2_band_selection[s2_index] == 1:
+                        band = np.load(osp.join(s2_folder_path, f"{s2_index}.npy"), allow_pickle=True)
+                        all_bands.append(band)
+
+                input_tensor = create_tensor(all_bands)
+
+                pred = model(input_tensor.unsqueeze(0))
+
+                pred = pred.cpu().squeeze().detach().numpy()
+
+                all_months.append(pred)
+
+        count = len(all_months)
+        prediction = np.asarray(sum(all_months) / count)
+        predictions.append(prediction)
+
+        total = len(patch_names)
+        if index % 100 == 0:
+            print(f"{index} / {total}")
+
+    return predictions
+
+def create_submissions(args):
+
+    model = load_model(args)
+    test_data_path = args.testing_features_path
+
+    with open(args.testing_ids_path, newline='') as f:
         reader = csv.reader(f)
         patch_name_data = list(reader)
     patch_names = patch_name_data[0]
@@ -305,29 +314,37 @@ def create_predictions(model):
                 all_bands = []
 
                 for s1_index in range(0, 4):
-                    band = np.load(osp.join(s1_folder_path, f"{s1_index}.npy"), allow_pickle=True)
-                    all_bands.append(band)
+
+                    if args.S1_band_selection[s1_index] == 1:
+                        band = np.load(osp.join(s1_folder_path, f"{s1_index}.npy"), allow_pickle=True)
+                        all_bands.append(band)
 
                 for s2_index in range(0, 10):
-                    band = np.load(osp.join(s2_folder_path, f"{s2_index}.npy"), allow_pickle=True)
-                    all_bands.append(band)
 
-                input_tensor = torch.tensor(np.asarray(all_bands, dtype=np.float32))
+                    if args.S2_band_selection[s2_index] == 1:
+                        band = np.load(osp.join(s2_folder_path, f"{s2_index}.npy"), allow_pickle=True)
+                        all_bands.append(band)
 
-                input_tensor = (input_tensor.permute(1, 2, 0) - input_tensor.mean(dim=(1, 2))) / (
-                        input_tensor.std(dim=(1, 2)) + 0.01)
-                input_tensor = input_tensor.permute(2, 0, 1)
-                input_tensor = input_tensor.unsqueeze(0)
+                input_tensor = create_tensor(all_bands)
 
-                pred = model(input_tensor)
+                pred = model(input_tensor.unsqueeze(0))
 
                 pred = pred.cpu().squeeze().detach().numpy()
 
                 all_months.append(pred)
 
         count = len(all_months)
-        prediction = np.asarray(sum(all_months) / count)
-        predictions.append(prediction)
+
+        if count == 0:
+            continue
+
+        agbm_arr = np.asarray(sum(all_months) / count)
+        predictions.append(agbm_arr)
+
+        test_agbm_path = osp.join(args.submission_folder_path, f"{patch_name}_agbm.tif")
+
+        im = Image.fromarray(agbm_arr)
+        im.save(test_agbm_path)
 
         total = len(patch_names)
         if index % 100 == 0:
@@ -335,8 +352,91 @@ def create_predictions(model):
 
     return predictions
 
+def set_args():
+
+    model_segmenter = "Unet"
+    model_encoder = "efficientnet-b7"
+    epochs = 5
+    learning_rate = 1e-4
+    dataloader_workers = 6
+    validation_fraction = 0.2
+    batch_size = 2
+    log_step_frequency = 10
+    version = -1  # Keep -1 if loading the latest model version.
+    save_top_k_checkpoints = 3
+
+    sentinel_1_bands = {
+        "VV ascending": 0,
+        "VH ascending": 0,
+        "VV descending": 0,
+        "VH descending": 0
+    }
+
+    sentinel_2_bands = {
+        "B2-Blue": 1,
+        "B3-Green": 1,
+        "B4-Red": 1,
+        "B5-Veg red edge 1": 1,
+        "B6-Veg red edge 2": 1,
+        "B7-Veg red edge 3": 1,
+        "B8-NIR": 1,
+        "B8A-Narrow NIR": 1,
+        "B11-SWIR 1": 1,
+        "B12-SWIR 2": 1,
+        "Cloud probability": 0
+    }
+
+    s1_list = list(sentinel_1_bands.values())
+    s2_list = list(sentinel_2_bands.values())
+
+    s1_bands_indicator = "S1-" + ''.join(str(x) for x in s1_list)
+    s2_bands_indicator = "S2-" + ''.join(str(x) for x in s2_list)
+
+    parser = argparse.ArgumentParser()
+
+    model_identifier = f"{model_segmenter}_{model_encoder}_{s1_bands_indicator}_{s2_bands_indicator}"
+    parser.add_argument('--model_identifier', default=model_identifier, type=str)
+    parser.add_argument('--segmenter_name', default=model_segmenter, type=str)
+    parser.add_argument('--encoder_name', default=model_encoder, type=str)
+    parser.add_argument('--model_version', default=version, type=int)
+
+    data_path = osp.dirname(data.__file__)
+    models_path = osp.dirname(models.__file__)
+    parser.add_argument('--training_features_path', default=str(osp.join(data_path, "converted")), type=str)
+    parser.add_argument('--training_ids_path', default=str(osp.join(data_path, "patch_names")), type=str)
+    parser.add_argument('--testing_features_path', default=str(osp.join(data_path, "testing_converted")), type=str)
+    parser.add_argument('--testing_ids_path', default=str(osp.join(data_path, "test_patch_names")), type=str)
+    parser.add_argument('--current_model_path', default=str(osp.join(models_path, "tb_logs", model_identifier)), type=str)
+    parser.add_argument('--submission_folder_path', default=str(osp.join(data_path, "imgs", "test_agbm")), type=str)
+
+    parser.add_argument('--dataloader_workers', default=dataloader_workers, type=int)
+    parser.add_argument('--batch_size', default=batch_size, type=int)
+    parser.add_argument('--epochs', default=epochs, type=int)
+    parser.add_argument('--learning_rate', default=learning_rate, type=float)
+    parser.add_argument('--validation_fraction', default=validation_fraction, type=float)
+    parser.add_argument('--log_step_frequency', default=log_step_frequency, type=int)
+    parser.add_argument('--save_top_k_checkpoints', default=save_top_k_checkpoints, type=int)
+
+    parser.add_argument('--S1_band_selection', default=s1_list, type=list)
+    parser.add_argument('--S2_band_selection', default=s2_list, type=list)
+
+    args = parser.parse_args()
+
+    print('=' * 30)
+    for arg in vars(args):
+        print('--', arg, ':', getattr(args, arg))
+    print('=' * 30)
+
+    return args
 
 if __name__ == '__main__':
-    # create_submissions()
-    train("Unet", "efficientnet-b7", 20, 0.8, accelerator="gpu")
-    # model = load_model("Unet", "resnet50", 10)
+    args = set_args()
+
+    train(args)
+    #create_submissions(args)
+
+    # No more bad paths
+    # Maybe more functions
+    # Related code closer together
+    # Review whitespace usage
+    # Class names
