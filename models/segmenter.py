@@ -108,7 +108,6 @@ def prepare_dataset(training_ids_path, training_features_path, S1_band_selection
         reader = csv.reader(f)
         patch_name_data = list(reader)
     patch_names = patch_name_data[0]
-    patch_names = patch_names[0:500]
 
     patch_month_non_missing = []
     for patch in patch_names:
@@ -129,7 +128,8 @@ def select_segmenter(segmenter_name, encoder_name, number_of_channels):
         base_model = smp.Unet(
             encoder_name=encoder_name,
             in_channels=number_of_channels,
-            classes=1
+            classes=1,
+            encoder_weights="imagenet"
         )
     else:
         base_model = None
@@ -139,9 +139,13 @@ def select_segmenter(segmenter_name, encoder_name, number_of_channels):
 
 
 def create_tensor(band_list):
-    band_list = np.asarray(band_list, dtype=np.float32)
-    band_clipped = np.clip(band_list, 0, 3000)
-    band_tensor = torch.tensor(band_clipped)
+    band_array = np.asarray(band_list, dtype=np.float32)
+
+    # normalization happens here
+    # band_clipped = np.clip(band_list, 0, 3000)/10000
+
+    band_tensor = torch.tensor(band_array)
+
     band_tensor = (band_tensor.permute(1, 2, 0) - band_tensor.mean(dim=(1, 2))) / (band_tensor.std(dim=(1, 2)) + 0.01)
     band_tensor = band_tensor.permute(2, 0, 1)
 
@@ -191,7 +195,8 @@ def train(args):
         max_epochs=args.epochs,
         logger=[logger],
         log_every_n_steps=args.log_step_frequency,
-        callbacks=[checkpoint_callback]
+        callbacks=[checkpoint_callback],
+        num_sanity_val_steps=0
     )
 
     trainer.fit(model, train_dataloaders=train_dataloader, val_dataloaders=valid_dataloader)
@@ -317,7 +322,7 @@ def create_submissions(args):
                         band = np.load(osp.join(s1_folder_path, f"{s1_index}.npy"), allow_pickle=True)
                         all_bands.append(band)
 
-                for s2_index in range(0, 10):
+                for s2_index in range(0, 11):
 
                     if args.S2_band_selection[s2_index] == 1:
                         band = np.load(osp.join(s2_folder_path, f"{s2_index}.npy"), allow_pickle=True)
@@ -353,7 +358,7 @@ def create_submissions(args):
 
 def set_args():
     model_segmenter = "Unet"
-    model_encoder = "efficientnet-b7"
+    model_encoder = "efficientnet-b2"
     epochs = 100
     learning_rate = 1e-4
     dataloader_workers = 6
@@ -361,13 +366,13 @@ def set_args():
     batch_size = 8
     log_step_frequency = 500
     version = -1  # Keep -1 if loading the latest model version.
-    save_top_k_checkpoints = 5
+    save_top_k_checkpoints = 20
 
     sentinel_1_bands = {
-        "VV ascending": 0,
-        "VH ascending": 0,
-        "VV descending": 0,
-        "VH descending": 0
+        "VV ascending": 1,
+        "VH ascending": 1,
+        "VV descending": 1,
+        "VH descending": 1
     }
 
     sentinel_2_bands = {
