@@ -125,7 +125,8 @@ def select_segmenter(args):
         base_model = smp.Unet(
             encoder_name=args.encoder_name,
             in_channels=channel_count,
-            classes=1
+            classes=1,
+            encoder_weights=args.encoder_weights
         )
 
     else:
@@ -215,6 +216,13 @@ def load_model(args):
 
     base_model = select_segmenter(args)
 
+    ###########################################################
+
+    # This block might be redundant if we can download weights via the python segmentation models library.
+    # However, it might be that not all weights are available this way.
+    # If you have downloaded weights (in the .pt format), put them in the pre-trained-weights folder
+    # and give the file the same name as the encoder you're using.
+    # If you do that, this block will try and load them for your model.
     pre_trained_weights_dir_path = osp.join(osp.dirname(data.__file__), "pre-trained_weights")
 
     if osp.exists(osp.join(pre_trained_weights_dir_path, f"{args.encoder_name}.pt")):
@@ -224,6 +232,8 @@ def load_model(args):
 
     if pre_trained_weights_path is not None:
         base_model.encoder.load_state_dict(torch.load(pre_trained_weights_path))
+
+    ###########################################################
 
     model = Sentinel2Model(model=base_model, learning_rate=args.learning_rate, loss_function=args.loss_function)
 
@@ -270,7 +280,7 @@ def create_submissions(args):
                         band = np.load(osp.join(s1_folder_path, f"{s1_index}.npy"), allow_pickle=True)
                         all_bands.append(band)
 
-                for s2_index in range(0, 10):
+                for s2_index in range(0, 11):
 
                     if args.S2_band_selection[s2_index] == 1:
                         band = np.load(osp.join(s2_folder_path, f"{s2_index}.npy"), allow_pickle=True)
@@ -303,7 +313,8 @@ def create_submissions(args):
 def set_args():
 
     model_segmenter = "Unet"
-    model_encoder = "efficientnet-b7"
+    model_encoder = "efficientnet-b2"
+    model_encoder_weights = "imagenet"  # Leave None if not using weights.
     epochs = 5
     learning_rate = 1e-4
     dataloader_workers = 6
@@ -347,6 +358,7 @@ def set_args():
     parser.add_argument('--model_identifier', default=model_identifier, type=str)
     parser.add_argument('--segmenter_name', default=model_segmenter, type=str)
     parser.add_argument('--encoder_name', default=model_encoder, type=str)
+    parser.add_argument('--encoder_weights', default=model_encoder_weights, type=str)
     parser.add_argument('--model_version', default=version, type=int)
 
     data_path = osp.dirname(data.__file__)
