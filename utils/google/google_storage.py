@@ -6,7 +6,7 @@ import google
 from google.cloud import storage
 
 
-def upload_file_remote(path: str, bucket_name: str = 'forest-biomass') -> str:
+def upload_file_remote(path: str, bucket_name: str = 'converted') -> str:
     """
     Upload file and return path to file on Google Cloud Storage
     :param path: Path to local file (to be uploaded)
@@ -26,7 +26,7 @@ def upload_file_remote(path: str, bucket_name: str = 'forest-biomass') -> str:
     return f"gs://{bucket_name}/{path.split('/')[-1]}"
 
 
-def delete_file_remote(path: str, bucket_name: str = 'forest-biomass') -> None:
+def delete_file_remote(path: str, bucket_name: str = 'converted') -> None:
     """
     Method to delete
     :param path: Path to file on GCS to be deleted
@@ -81,6 +81,6 @@ if __name__ == "__main__":
 
     storage_client = storage.Client()
 
-    bucket = storage_client.bucket('forest-biomass')
+    bucket = storage_client.bucket('converted')
 
     upload_local_directory_to_gcs(r"C:\Users\Team Epoch A\Desktop\forest-biomass", bucket, 'forest')

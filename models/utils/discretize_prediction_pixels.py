@@ -34,7 +34,7 @@ def write_discrete_pixels():
         patch_name_data = list(reader)
     patch_names = patch_name_data[0]
 
-    train_data_path = osp.join(osp.dirname(data.__file__), "forest-biomass")
+    train_data_path = osp.join(osp.dirname(data.__file__), "converted")
     final_discrete_pixels = []
     for patch in patch_names:
         X_all, y_all, selected_patch_names = get_all_bands([patch], train_data_path)
@@ -62,7 +62,7 @@ def get_discrete_pixel_list():
     Returns list of pixel values found in agbm labels, which turned out to be discrete,
     WARNING: Does not fit in RAM if used on a lot of patches
     """
-    train_data_path = osp.join(osp.dirname(data.__file__), "forest-biomass")
+    train_data_path = osp.join(osp.dirname(data.__file__), "converted")
     with open(osp.join(osp.dirname(data.__file__), 'patch_names'), newline='') as f:
         reader = csv.reader(f)
         patch_name_data = list(reader)

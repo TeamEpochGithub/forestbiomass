@@ -72,7 +72,7 @@ class DataGenerator():
             - This saves work, because we will be fetching batches multiple times (across epochs)
         """
         # Get all filenames in directory
-        self.filenames = list_directories('forest-biomass', 'forest')
+        self.filenames = list_directories('converted', 'forest')
 
         # Include batch size as attribute
         self.batch_size = batch_size
@@ -89,7 +89,7 @@ class DataGenerator():
         """
 
         storage_client = storage.Client()
-        bucket = storage_client.bucket("forest-biomass")
+        bucket = storage_client.bucket("converted")
         print("Bucket ready")
         # Get filenames for X batch
         batch_filenames = self.filenames[idx * self.batch_size:(idx + 1) * self.batch_size]
@@ -125,8 +125,8 @@ class DataGenerator():
             for month in range(12):
                 missing = 0
                 # List all npy files for S1 and S2 separate per month
-                s1_blobs_per_month = storage_client.list_blobs("forest-biomass", prefix=f'{file}{month}/S1')
-                s2_blobs_per_month = storage_client.list_blobs("forest-biomass", prefix=f'{file}{month}/S2')
+                s1_blobs_per_month = storage_client.list_blobs("converted", prefix=f'{file}{month}/S1')
+                s2_blobs_per_month = storage_client.list_blobs("converted", prefix=f'{file}{month}/S2')
                 # Proces data in blob to use np.load and append the whole month together in s1_blobs
                 s1_temp = []
                 for s1_blob in s1_blobs_per_month:
@@ -173,7 +173,7 @@ class DataGenerator():
 if __name__ == "__main__":
     authenticate_remote()
 
-    path = "gs://forest-biomass/forest"
+    path = "gs://converted/forest"
 
     datagen = DataGenerator()
     x, missing, y = datagen[8]
