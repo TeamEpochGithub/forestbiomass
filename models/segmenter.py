@@ -20,6 +20,9 @@ import models
 import csv
 from pytorch_lightning.strategies import DDPStrategy
 import argparse
+from csv import writer
+
+from models.utils.check_corrupted import is_corrupted
 
 warnings.filterwarnings("ignore", category=rasterio.errors.NotGeoreferencedWarning)
 
@@ -103,8 +106,8 @@ class Sentinel2Model(pl.LightningModule):
         return loss
 
 
-def prepare_dataset(training_ids_path, training_features_path, S1_band_selection, S2_band_selection):
-    with open(training_ids_path, newline='') as f:
+def prepare_dataset(training_ids_path, training_features_path, S1_band_selection, S2_band_selection, transform_method):
+    with open(training_ids_path, newline='\n') as f:
         reader = csv.reader(f)
         patch_name_data = list(reader)
     patch_names = patch_name_data[0]
@@ -117,13 +120,44 @@ def prepare_dataset(training_ids_path, training_features_path, S1_band_selection
             if osp.exists(osp.join(month_patch_path, "S2")):
                 patch_month_non_missing.append((patch, str(month)))
 
+    in_channels = S1_band_selection.count(1) + S2_band_selection.count(1)
+    transform_method, transform_channels = select_transform_method(transform_method, in_channels=in_channels)
+
     new_dataset = SegmentationDatasetMaker(training_features_path, patch_month_non_missing, S1_band_selection,
-                                           S2_band_selection)
-    return new_dataset, (S1_band_selection.count(1) + S2_band_selection.count(1))
+                                           S2_band_selection, transform_method)
+    return new_dataset, (in_channels + transform_channels)
+
+
+def select_transform_method(picked_transform_method, in_channels):
+    if picked_transform_method == "replace_corrupted_0s":
+        return replace_corrupted_0s, 0
+    elif picked_transform_method == "add_band_corrupted_arrays":
+        return add_band_corrupted_arrays, in_channels
+    else:
+        return no_transformation, 0
+
+
+def no_transformation(tensor_bands):
+    return tensor_bands
+
+
+def replace_corrupted_0s(tensor_bands):
+    for ind, band in enumerate(tensor_bands):
+        if is_corrupted(np.array(band)):
+            tensor_bands[ind] = torch.zeros((256, 256))
+    return tensor_bands
+
+
+def add_band_corrupted_arrays(tensor_bands):
+    for ind, band in enumerate(tensor_bands):
+        if is_corrupted(np.array(band)):
+            tensor_bands = torch.cat((tensor_bands, torch.zeros((1, 256, 256))), 0)
+        else:
+            tensor_bands = torch.cat((tensor_bands, torch.ones((1, 256, 256))), 0)
+    return tensor_bands
 
 
 def select_segmenter(segmenter_name, encoder_name, number_of_channels):
-
     if segmenter_name == "Unet":
         base_model = smp.Unet(
             encoder_name=encoder_name,
@@ -155,7 +189,9 @@ def create_tensor(band_list):
 def train(args):
     print("Getting train data...")
 
-    train_dataset, number_of_channels = prepare_dataset(args.training_ids_path, args.training_features_path, args.S1_band_selection, args.S2_band_selection)
+    train_dataset, number_of_channels = prepare_dataset(args.training_ids_path, args.training_features_path,
+                                                        args.S1_band_selection, args.S2_band_selection,
+                                                        args.transform_method)
 
     train_size = int(1 - args.validation_fraction * len(train_dataset))
     valid_size = len(train_dataset) - train_size
@@ -201,6 +237,10 @@ def train(args):
 
     trainer.fit(model, train_dataloaders=train_dataloader, val_dataloaders=valid_dataloader)
 
+    with open('train_results.csv', 'a+', newline='') as f:
+        append_writer = writer(f)
+        append_writer.writerow([args.transform_method, str(trainer.callback_metrics['train/rmse'].item())])
+
     return model
 
 
@@ -245,8 +285,6 @@ def create_predictions(args):
         reader = csv.reader(f)
         patch_name_data = list(reader)
     patch_names = patch_name_data[0]
-
-    total = len(patch_names)
 
     predictions = []
     for index, id in enumerate(patch_names):
@@ -359,14 +397,15 @@ def create_submissions(args):
 def set_args():
     model_segmenter = "Unet"
     model_encoder = "efficientnet-b2"
-    epochs = 100
+    epochs = 5
     learning_rate = 1e-4
     dataloader_workers = 6
     validation_fraction = 0.2
     batch_size = 8
-    log_step_frequency = 500
+    log_step_frequency = 1
     version = -1  # Keep -1 if loading the latest model version.
     save_top_k_checkpoints = 20
+    transform_method = "add_band_corrupted_arrays"  # nothing
 
     sentinel_1_bands = {
         "VV ascending": 1,
@@ -423,6 +462,7 @@ def set_args():
 
     parser.add_argument('--S1_band_selection', default=s1_list, type=list)
     parser.add_argument('--S2_band_selection', default=s2_list, type=list)
+    parser.add_argument('--transform_method', default=transform_method, type=str)
 
     args = parser.parse_args()
 
@@ -435,9 +475,19 @@ def set_args():
 
 
 if __name__ == '__main__':
-    args = set_args()
+    # args = set_args()
+    #
+    # train(args)
 
-    train(args)
+    iterations = 3
+    corrupted_methods = ["nothing", "replace_corrupted_0s", "add_band_corrupted_arrays"]
+
+    for corrupted_transform_method in corrupted_methods:
+        for iteration in range(3):
+            args = set_args()
+            args.transform_method = corrupted_transform_method
+            train(args)
+
     # create_submissions(args)
 
     # No more bad paths
