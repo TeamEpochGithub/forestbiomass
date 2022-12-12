@@ -1,9 +1,7 @@
 import torch
 from PIL import Image
 import numpy
-from matplotlib import pyplot as plt
 from torch.utils.data import Dataset, DataLoader
-import torch.nn.functional as F
 from torch import distributed as dist
 import segmentation_models_pytorch as smp
 import os
@@ -18,7 +16,6 @@ from pytorch_lightning.callbacks import ModelCheckpoint
 import models
 import data
 import csv
-import argparse
 from models.utils import loss_functions
 from pytorch_lightning.strategies import DDPStrategy
 import argparse
@@ -67,7 +64,7 @@ class SegmentationDatasetMaker(Dataset):
         return data_tensor, label_tensor
 
 
-class Sentinel2Model(pl.LightningModule):
+class Segmenter(pl.LightningModule):
     def __init__(self, model, learning_rate, loss_function):
         super().__init__()
         self.model = model
@@ -173,7 +170,7 @@ def train(args):
     if pre_trained_weights_path is not None:
         base_model.encoder.load_state_dict(torch.load(pre_trained_weights_path))
 
-    model = Sentinel2Model(model=base_model, learning_rate=args.learning_rate, loss_function=args.loss_function)
+    model = Segmenter(model=base_model, learning_rate=args.learning_rate, loss_function=args.loss_function)
 
     logger = TensorBoardLogger("tb_logs", name=args.model_identifier)
 
@@ -232,7 +229,7 @@ def load_model(args):
 
     ###########################################################
 
-    model = Sentinel2Model(model=base_model, learning_rate=args.learning_rate, loss_function=args.loss_function)
+    model = Segmenter(model=base_model, learning_rate=args.learning_rate, loss_function=args.loss_function)
 
     checkpoint = torch.load(str(latest_checkpoint_path))
     model.load_state_dict(checkpoint["state_dict"])
@@ -271,15 +268,15 @@ def create_submissions(args):
 
                 all_bands = []
 
-                for s1_index in range(0, 4):
+                for s1_index, band_selection_indicator in enumerate(args.S1_band_selection):
 
-                    if args.S1_band_selection[s1_index] == 1:
+                    if band_selection_indicator == 1:
                         band = np.load(osp.join(s1_folder_path, f"{s1_index}.npy"), allow_pickle=True)
                         all_bands.append(band)
 
-                for s2_index in range(0, 11):
+                for s2_index, band_selection_indicator in enumerate(args.S2_band_selection):
 
-                    if args.S2_band_selection[s2_index] == 1:
+                    if band_selection_indicator == 1:
                         band = np.load(osp.join(s2_folder_path, f"{s2_index}.npy"), allow_pickle=True)
                         all_bands.append(band)
 
@@ -351,7 +348,11 @@ def set_args():
 
     parser = argparse.ArgumentParser()
 
-    model_identifier = f"{model_segmenter}_{model_encoder}_{s1_bands_indicator}_{s2_bands_indicator}"
+    if model_encoder_weights is not None:
+        model_identifier = f"{model_segmenter}_{model_encoder}_{model_encoder_weights}_{s1_bands_indicator}_{s2_bands_indicator}"
+    else:
+        model_identifier = f"{model_segmenter}_{model_encoder}_{s1_bands_indicator}_{s2_bands_indicator}"
+
     parser.add_argument('--model_identifier', default=model_identifier, type=str)
     parser.add_argument('--segmenter_name', default=model_segmenter, type=str)
     parser.add_argument('--encoder_name', default=model_encoder, type=str)
@@ -391,4 +392,4 @@ def set_args():
 if __name__ == '__main__':
     args = set_args()
     train(args)
-    #create_submissions(args)
+    create_submissions(args)
