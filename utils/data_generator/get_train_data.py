@@ -162,7 +162,7 @@ def save_all_patches():
 
         label_path = osp.join(train_label_path, patch + "_agbm.tif")
         label_data = get_data_from_path(label_path)
-        save_label_path = osp.join("converted", patch)
+        save_label_path = osp.join("forest-biomass", patch)
 
         save_ndarray(save_label_path, "label", label_data)
 
@@ -177,12 +177,12 @@ def save_all_patches():
 
             if data_s1 is not None:
                 for band, d in enumerate(data_s1):
-                    save_s1_path = osp.join("converted", patch, str(month), "S1")
+                    save_s1_path = osp.join("forest-biomass", patch, str(month), "S1")
                     save_ndarray(save_s1_path, str(band), d)
 
             if data_s2 is not None:
                 for band, d in enumerate(data_s2):
-                    save_s2_path = osp.join("converted", patch, str(month), "S2")
+                    save_s2_path = osp.join("forest-biomass", patch, str(month), "S2")
                     save_ndarray(save_s2_path, str(band), d)
 
 

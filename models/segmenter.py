@@ -1,7 +1,6 @@
-import sys
-
 import torch
 from PIL import Image
+import numpy
 from matplotlib import pyplot as plt
 from torch.utils.data import Dataset, DataLoader
 import torch.nn.functional as F
@@ -16,15 +15,18 @@ import numpy as np
 import os.path as osp
 from pytorch_lightning.loggers import TensorBoardLogger
 from pytorch_lightning.callbacks import ModelCheckpoint
-import data
 import models
+import data
 import csv
 import argparse
 from models.utils import loss_functions
+from pytorch_lightning.strategies import DDPStrategy
+import argparse
 
 warnings.filterwarnings("ignore", category=rasterio.errors.NotGeoreferencedWarning)
 
-class Segmentation_Dataset_Maker(Dataset):
+
+class SegmentationDatasetMaker(Dataset):
     def __init__(self, training_data_path, id_month_list, s1_bands, s2_bands, transform=None):
         self.training_data_path = training_data_path
         self.id_month_list = id_month_list
@@ -93,27 +95,24 @@ class Sentinel2Model(pl.LightningModule):
         return self.model(x)
 
 
-def prepare_dataset(args):
+def prepare_dataset(training_ids_path, training_features_path, S1_band_selection, S2_band_selection):
 
-    with open(args.training_ids_path, newline='') as f:
+    with open(training_ids_path, newline='') as f:
         reader = csv.reader(f)
         patch_name_data = list(reader)
     chip_ids = patch_name_data[0]
 
     id_month_list = []
-
     for id in chip_ids:
-
         for month in range(0, 12):
 
-            month_patch_path = osp.join(args.training_features_path, id, str(month))  # 1 is the green band, out of the 11 bands
-
+            month_patch_path = osp.join(training_features_path, id, str(month))
             if osp.exists(osp.join(month_patch_path, "S2")):
-
                 id_month_list.append((id, str(month)))
 
-    new_dataset = Segmentation_Dataset_Maker(args.training_features_path, id_month_list, args.S1_band_selection, args.S2_band_selection)
-    return new_dataset, (args.S1_band_selection.count(1) + args.S2_band_selection.count(1))
+    new_dataset = SegmentationDatasetMaker(training_features_path, id_month_list, S1_band_selection,
+                                           S2_band_selection)
+    return new_dataset, (S1_band_selection.count(1) + S2_band_selection.count(1))
 
 
 def select_segmenter(args):
@@ -128,20 +127,19 @@ def select_segmenter(args):
             classes=1,
             encoder_weights=args.encoder_weights
         )
-
     else:
         base_model = None
 
     assert base_model is not None, "Segmenter name was not recognized."
-
     return base_model
 
 
 def create_tensor(band_list):
+    band_array = np.asarray(band_list, dtype=np.float32)
 
-    band_list = np.asarray(band_list, dtype=np.float32)
+    band_tensor = torch.tensor(band_array)
 
-    band_tensor = torch.tensor(band_list)
+    # normalization happens here
     band_tensor = (band_tensor.permute(1, 2, 0) - band_tensor.mean(dim=(1, 2))) / (band_tensor.std(dim=(1, 2)) + 0.01)
     band_tensor = band_tensor.permute(2, 0, 1)
 
@@ -152,7 +150,8 @@ def train(args):
 
     print("Getting train data...")
 
-    train_dataset, number_of_channels = prepare_dataset(args)
+    train_dataset, number_of_channels = prepare_dataset(args.training_ids_path, args.training_features_path,
+                                                        args.S1_band_selection, args.S2_band_selection)
 
     train_size = int(1 - args.validation_fraction * len(train_dataset))
     valid_size = len(train_dataset) - train_size
@@ -209,9 +208,7 @@ def load_model(args):
     version_dir = list(os.scandir(log_folder_path))[args.model_version]
 
     checkpoint_dir_path = osp.join(log_folder_path, version_dir, "checkpoints")
-
     latest_checkpoint_name = list(os.scandir(checkpoint_dir_path))[-1]
-
     latest_checkpoint_path = osp.join(checkpoint_dir_path, latest_checkpoint_name)
 
     base_model = select_segmenter(args)
@@ -394,5 +391,4 @@ def set_args():
 if __name__ == '__main__':
     args = set_args()
     train(args)
-
     #create_submissions(args)

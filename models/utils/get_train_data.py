@@ -2,11 +2,25 @@ import numpy as np
 import os.path as osp
 
 
+def get_all_from_band(patch_names, band, train_data_path):
+    X_all = []
+
+    for patch in patch_names:
+        for month in range(0, 12):
+            month_patch_path = osp.join(train_data_path, patch, str(month), "S2", f"{band}.npy")
+            try:
+                month_patch = np.load(month_patch_path, allow_pickle=True)
+                X_all.append(month_patch)
+            except IOError as e:
+                continue
+
+    return np.array(X_all)
+
+
 def get_average_green_band_data(patch_names, train_data_path):
     X_all = []
     y_all = []
     selected_patch_names = []
-    # patch_names = patch_names[0:100]
 
     for patch in patch_names:
         label_path = osp.join(train_data_path, patch, "label.npy")
@@ -105,8 +119,3 @@ def get_data_for_segmenter(patch_names, train_data_path):
             y_all.append(label)
 
     return np.array(X_all), np.array(y_all)
-
-# import data
-# train_data_path = osp.join(osp.dirname(data.__file__), "converted")
-#
-# print(get_data_for_segmenter(["0c1dea12", "0d129e66"], train_data_path)[0][0][0])
