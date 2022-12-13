@@ -1,6 +1,6 @@
 import torch
-import numpy
 from PIL import Image
+import numpy
 from matplotlib import pyplot as plt
 from torch.utils.data import Dataset, DataLoader
 import torch.nn.functional as F
@@ -15,9 +15,11 @@ import numpy as np
 import os.path as osp
 from pytorch_lightning.loggers import TensorBoardLogger
 from pytorch_lightning.callbacks import ModelCheckpoint
-import data
 import models
+import data
 import csv
+import argparse
+from models.utils import loss_functions
 from pytorch_lightning.strategies import DDPStrategy
 import argparse
 
@@ -27,19 +29,19 @@ warnings.filterwarnings("ignore", category=rasterio.errors.NotGeoreferencedWarni
 
 
 class SegmentationDatasetMaker(Dataset):
-    def __init__(self, training_data_path, patch_month_non_missing, s1_bands, s2_bands, transform=None):
+    def __init__(self, training_data_path, id_month_list, s1_bands, s2_bands, transform=None):
         self.training_data_path = training_data_path
-        self.patch_month_non_missing = patch_month_non_missing
+        self.id_month_list = id_month_list
         self.s1_bands = s1_bands
         self.s2_bands = s2_bands
         self.transform = transform
 
     def __len__(self):
-        return len(self.patch_month_non_missing)
+        return len(self.id_month_list)
 
     def __getitem__(self, idx):
 
-        id, month = self.patch_month_non_missing[idx]
+        id, month = self.id_month_list[idx]
 
         label_path = osp.join(self.training_data_path, id, "label.npy")
         label = np.load(label_path, allow_pickle=True)
@@ -68,27 +70,24 @@ class SegmentationDatasetMaker(Dataset):
 
 
 class Sentinel2Model(pl.LightningModule):
-    def __init__(self, model, learning_rate):
+    def __init__(self, model, learning_rate, loss_function):
         super().__init__()
         self.model = model
         self.learning_rate = learning_rate
+        self.loss_function = loss_function
 
     def training_step(self, batch, batch_idx):
         x, y = batch
         y_hat = self.model(x)
-        loss = F.mse_loss(y_hat, y)
+        loss = self.loss_function(y_hat, y)
         self.log("train/loss", loss)
-        self.log("train/rmse", torch.sqrt(loss))
-        loss = self.rmse_loss(y_hat, y)
         return loss
 
     def validation_step(self, batch, batch_idx):
         x, y = batch
         y_hat = self.model(x)
-        loss = F.mse_loss(y_hat, y)
+        loss = self.loss_function(y_hat, y)
         self.log("val/loss", loss)
-        self.log("val/rmse", torch.sqrt(loss))
-        loss = self.rmse_loss(y_hat, y)
         return loss
 
     def configure_optimizers(self):
@@ -97,32 +96,25 @@ class Sentinel2Model(pl.LightningModule):
     def forward(self, x):
         return self.model(x)
 
-    def rmse_loss(self, x, y):
-        eps = 1e-6
-        # criterion = torch.nn.MSELoss()
-        criterion = F.mse_loss
-        loss = torch.sqrt(criterion(x, y) + eps)
-        return loss
-
 
 def prepare_dataset(training_ids_path, training_features_path, S1_band_selection, S2_band_selection, transform_method):
     with open(training_ids_path, newline='\n') as f:
         reader = csv.reader(f)
         patch_name_data = list(reader)
-    patch_names = patch_name_data[0]
+    chip_ids = patch_name_data[0]
 
-    patch_month_non_missing = []
-    for patch in patch_names:
+    id_month_list = []
+    for id in chip_ids:
         for month in range(0, 12):
 
-            month_patch_path = osp.join(training_features_path, patch, str(month))
+            month_patch_path = osp.join(training_features_path, id, str(month))
             if osp.exists(osp.join(month_patch_path, "S2")):
-                patch_month_non_missing.append((patch, str(month)))
+                id_month_list.append((id, str(month)))
 
     in_channels = S1_band_selection.count(1) + S2_band_selection.count(1)
     transform_method, transform_channels = select_transform_method(transform_method, in_channels=in_channels)
 
-    new_dataset = SegmentationDatasetMaker(training_features_path, patch_month_non_missing, S1_band_selection,
+    new_dataset = SegmentationDatasetMaker(training_features_path, id_month_list, S1_band_selection,
                                            S2_band_selection, transform_method)
     return new_dataset, (in_channels + transform_channels)
 
@@ -162,7 +154,7 @@ def select_segmenter(segmenter_name, encoder_name, number_of_channels):
             encoder_name=encoder_name,
             in_channels=number_of_channels,
             classes=1,
-            encoder_weights="imagenet"
+            encoder_weights=args.encoder_weights
         )
     else:
         base_model = None
@@ -174,11 +166,9 @@ def select_segmenter(segmenter_name, encoder_name, number_of_channels):
 def create_tensor(band_list):
     band_array = np.asarray(band_list, dtype=np.float32)
 
-    # normalization happens here
-    # band_clipped = np.clip(band_list, 0, 3000)/10000
-
     band_tensor = torch.tensor(band_array)
 
+    # normalization happens here
     band_tensor = (band_tensor.permute(1, 2, 0) - band_tensor.mean(dim=(1, 2))) / (band_tensor.std(dim=(1, 2)) + 0.01)
     band_tensor = band_tensor.permute(2, 0, 1)
 
@@ -219,13 +209,13 @@ def train(args):
     if pre_trained_weights_path is not None:
         base_model.encoder.load_state_dict(torch.load(pre_trained_weights_path))
 
-    model = Sentinel2Model(model=base_model, learning_rate=args.learning_rate)
+    model = Sentinel2Model(model=base_model, learning_rate=args.learning_rate, loss_function=args.loss_function)
 
     logger = TensorBoardLogger("tb_logs", name=args.model_identifier)
 
     checkpoint_callback = ModelCheckpoint(
         save_top_k=args.save_top_k_checkpoints,
-        monitor="val/rmse",
+        monitor="val/loss",
         mode="min",
     )
 
@@ -241,7 +231,7 @@ def train(args):
 
     trainer.fit(model, train_dataloaders=train_dataloader, val_dataloaders=valid_dataloader)
 
-    return model, str(trainer.callback_metrics['train/rmse'].item())
+    return model, str(trainer.callback_metrics['val/loss'].item())
 
 
 def load_model(args):
@@ -259,6 +249,11 @@ def load_model(args):
     base_model = select_segmenter(args.segmenter_name, args.encoder_name,
                                   (args.S1_band_selection.count(1) + args.S2_band_selection.count(1)))
 
+    # This block might be redundant if we can download weights via the python segmentation models library.
+    # However, it might be that not all weights are available this way.
+    # If you have downloaded weights (in the .pt format), put them in the pre-trained-weights folder
+    # and give the file the same name as the encoder you're using.
+    # If you do that, this block will try and load them for your model.
     pre_trained_weights_dir_path = osp.join(osp.dirname(data.__file__), "pre-trained_weights")
 
     if osp.exists(osp.join(pre_trained_weights_dir_path, f"{args.encoder_name}.pt")):
@@ -269,7 +264,9 @@ def load_model(args):
     if pre_trained_weights_path is not None:
         base_model.encoder.load_state_dict(torch.load(pre_trained_weights_path))
 
-    model = Sentinel2Model(model=base_model, learning_rate=args.learning_rate)
+    ###########################################################
+
+    model = Sentinel2Model(model=base_model, learning_rate=args.learning_rate, loss_function=args.loss_function)
 
     checkpoint = torch.load(str(latest_checkpoint_path))
     model.load_state_dict(checkpoint["state_dict"])
@@ -332,13 +329,13 @@ def create_submissions(args):
     patch_names = patch_name_data[0]
 
     predictions = []
-    for index, patch_name in enumerate(patch_names):
+    for index, id in enumerate(patch_names):
 
         all_months = []
         for month in range(0, 12):
 
-            s1_folder_path = osp.join(test_data_path, patch_name, f"{month:02}", "S1")
-            s2_folder_path = osp.join(test_data_path, patch_name, f"{month:02}", "S2")
+            s1_folder_path = osp.join(test_data_path, id, f"{month:02}", "S1")
+            s2_folder_path = osp.join(test_data_path, id, f"{month:02}", "S2")
 
             if osp.exists(s2_folder_path):
                 all_bands = []
@@ -363,9 +360,8 @@ def create_submissions(args):
             continue
 
         agbm_arr = np.asarray(sum(all_months) / count)
-        predictions.append(agbm_arr)
 
-        test_agbm_path = osp.join(args.submission_folder_path, f"{patch_name}_agbm.tif")
+        test_agbm_path = osp.join(args.submission_folder_path, f"{id}_agbm.tif")
 
         im = Image.fromarray(agbm_arr)
         im.save(test_agbm_path)
@@ -380,15 +376,17 @@ def create_submissions(args):
 def set_args():
     model_segmenter = "Unet"
     model_encoder = "efficientnet-b2"
+    model_encoder_weights = "imagenet"  # Leave None if not using weights.
     epochs = 5
     learning_rate = 1e-4
     dataloader_workers = 6
     validation_fraction = 0.2
     batch_size = 8
-    log_step_frequency = 1
+    log_step_frequency = 200
     version = -1  # Keep -1 if loading the latest model version.
-    save_top_k_checkpoints = 20
+    save_top_k_checkpoints = 3
     transform_method = "add_band_corrupted_arrays"  # nothing
+    loss_function = loss_functions.logit_binary_cross_entropy_loss
 
     sentinel_1_bands = {
         "VV ascending": 1,
@@ -423,6 +421,7 @@ def set_args():
     parser.add_argument('--model_identifier', default=model_identifier, type=str)
     parser.add_argument('--segmenter_name', default=model_segmenter, type=str)
     parser.add_argument('--encoder_name', default=model_encoder, type=str)
+    parser.add_argument('--encoder_weights', default=model_encoder_weights, type=str)
     parser.add_argument('--model_version', default=version, type=int)
 
     data_path = osp.dirname(data.__file__)
@@ -445,12 +444,12 @@ def set_args():
 
     parser.add_argument('--S1_band_selection', default=s1_list, type=list)
     parser.add_argument('--S2_band_selection', default=s2_list, type=list)
+    parser.add_argument('--loss_function', default=loss_function)
     parser.add_argument('--transform_method', default=transform_method, type=str)
 
     args = parser.parse_args()
 
     return args
-
 
 if __name__ == '__main__':
     args = set_args()
