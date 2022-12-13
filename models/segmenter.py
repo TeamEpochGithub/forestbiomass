@@ -111,6 +111,7 @@ def prepare_dataset(training_ids_path, training_features_path, S1_band_selection
         reader = csv.reader(f)
         patch_name_data = list(reader)
     patch_names = patch_name_data[0]
+    patch_names = patch_names[:100]
 
     patch_month_non_missing = []
     for patch in patch_names:
@@ -187,6 +188,11 @@ def create_tensor(band_list):
 
 
 def train(args):
+    print('=' * 30)
+    for arg in vars(args):
+        print('--', arg, ':', getattr(args, arg))
+    print('=' * 30)
+
     print("Getting train data...")
 
     train_dataset, number_of_channels = prepare_dataset(args.training_ids_path, args.training_features_path,
@@ -466,32 +472,9 @@ def set_args():
 
     args = parser.parse_args()
 
-    print('=' * 30)
-    for arg in vars(args):
-        print('--', arg, ':', getattr(args, arg))
-    print('=' * 30)
-
     return args
 
 
 if __name__ == '__main__':
-    # args = set_args()
-    #
-    # train(args)
-
-    iterations = 3
-    corrupted_methods = ["nothing", "replace_corrupted_0s", "add_band_corrupted_arrays"]
-
-    for corrupted_transform_method in corrupted_methods:
-        for iteration in range(3):
-            args = set_args()
-            args.transform_method = corrupted_transform_method
-            train(args)
-
-    # create_submissions(args)
-
-    # No more bad paths
-    # Maybe more functions
-    # Related code closer together
-    # Review whitespace usage
-    # Class names
+    args = set_args()
+    train(args)
