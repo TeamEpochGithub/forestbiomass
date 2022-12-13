@@ -4,7 +4,9 @@ from models.segmenter import set_args, train
 
 
 def evaluate_segmentation_parameter(parameters, parameter_name, results_filename, iterations=3, epochs=3):
-
+    """
+    Calls segmentation training a predetermined amount of times to evaluate a certain parameter
+    """
     for parameter in parameters:
         for iteration in range(iterations):
             args = set_args()

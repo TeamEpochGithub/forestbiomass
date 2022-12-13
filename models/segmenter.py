@@ -86,8 +86,8 @@ class Sentinel2Model(pl.LightningModule):
         x, y = batch
         y_hat = self.model(x)
         loss = F.mse_loss(y_hat, y)
-        self.log("train/loss", loss)
-        self.log("train/rmse", torch.sqrt(loss))
+        self.log("val/loss", loss)
+        self.log("val/rmse", torch.sqrt(loss))
         loss = self.rmse_loss(y_hat, y)
         return loss
 
@@ -226,7 +226,7 @@ def train(args):
 
     checkpoint_callback = ModelCheckpoint(
         save_top_k=args.save_top_k_checkpoints,
-        monitor="train/rmse",
+        monitor="val/rmse",
         mode="min",
     )
 
@@ -455,4 +455,5 @@ def set_args():
 
 if __name__ == '__main__':
     args = set_args()
-    train(args)
+    _, score = train(args)
+    print(score)
