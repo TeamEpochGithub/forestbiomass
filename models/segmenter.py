@@ -247,7 +247,8 @@ def load_model(args):
     latest_checkpoint_path = osp.join(checkpoint_dir_path, latest_checkpoint_name)
 
     base_model = select_segmenter(args.segmenter_name, args.encoder_name,
-                                  (args.S1_band_selection.count(1) + args.S2_band_selection.count(1)))
+                                  (args.S1_band_selection.count(1) + args.S2_band_selection.count(1))
+                                  + args.extra_channels)
 
     # This block might be redundant if we can download weights via the python segmentation models library.
     # However, it might be that not all weights are available this way.
@@ -386,7 +387,11 @@ def set_args():
     version = -1  # Keep -1 if loading the latest model version.
     save_top_k_checkpoints = 3
     transform_method = "add_band_corrupted_arrays"  # nothing
-    loss_function = loss_functions.logit_binary_cross_entropy_loss
+    loss_function = loss_functions.rmse_loss
+
+    # WARNING: Only increment extra_channels when making predictions/submission (based on the transform method used)
+    # it is automatically incremented during training based on the transform method used (extra channels generated)
+    extra_channels = 0
 
     sentinel_1_bands = {
         "VV ascending": 1,
@@ -446,10 +451,12 @@ def set_args():
     parser.add_argument('--S2_band_selection', default=s2_list, type=list)
     parser.add_argument('--loss_function', default=loss_function)
     parser.add_argument('--transform_method', default=transform_method, type=str)
+    parser.add_argument('--extra_channels', default=extra_channels, type=int)
 
     args = parser.parse_args()
 
     return args
+
 
 if __name__ == '__main__':
     args = set_args()
