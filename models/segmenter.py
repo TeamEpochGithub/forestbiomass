@@ -20,7 +20,6 @@ import models
 import csv
 from pytorch_lightning.strategies import DDPStrategy
 import argparse
-from csv import writer
 
 from models.utils.check_corrupted import is_corrupted
 
@@ -243,11 +242,7 @@ def train(args):
 
     trainer.fit(model, train_dataloaders=train_dataloader, val_dataloaders=valid_dataloader)
 
-    with open('train_results.csv', 'a+', newline='') as f:
-        append_writer = writer(f)
-        append_writer.writerow([args.transform_method, str(trainer.callback_metrics['train/rmse'].item())])
-
-    return model
+    return model, str(trainer.callback_metrics['train/rmse'].item())
 
 
 def load_model(args):
@@ -296,34 +291,25 @@ def create_predictions(args):
     for index, id in enumerate(patch_names):
 
         all_months = []
-
         for month in range(0, 12):
-
             s1_folder_path = osp.join(test_data_path, id, f"{month:02}", "S1")
             s2_folder_path = osp.join(test_data_path, id, f"{month:02}", "S2")
 
             if osp.exists(s2_folder_path):
-
                 all_bands = []
-
                 for s1_index in range(0, 4):
-
                     if args.S1_band_selection[s1_index] == 1:
                         band = np.load(osp.join(s1_folder_path, f"{s1_index}.npy"), allow_pickle=True)
                         all_bands.append(band)
 
                 for s2_index in range(0, 10):
-
                     if args.S2_band_selection[s2_index] == 1:
                         band = np.load(osp.join(s2_folder_path, f"{s2_index}.npy"), allow_pickle=True)
                         all_bands.append(band)
 
                 input_tensor = create_tensor(all_bands)
-
                 pred = model(input_tensor.unsqueeze(0))
-
                 pred = pred.cpu().squeeze().detach().numpy()
-
                 all_months.append(pred)
 
         count = len(all_months)
@@ -350,34 +336,26 @@ def create_submissions(args):
     for index, patch_name in enumerate(patch_names):
 
         all_months = []
-
         for month in range(0, 12):
 
             s1_folder_path = osp.join(test_data_path, patch_name, f"{month:02}", "S1")
             s2_folder_path = osp.join(test_data_path, patch_name, f"{month:02}", "S2")
 
             if osp.exists(s2_folder_path):
-
                 all_bands = []
-
                 for s1_index in range(0, 4):
-
                     if args.S1_band_selection[s1_index] == 1:
                         band = np.load(osp.join(s1_folder_path, f"{s1_index}.npy"), allow_pickle=True)
                         all_bands.append(band)
 
                 for s2_index in range(0, 11):
-
                     if args.S2_band_selection[s2_index] == 1:
                         band = np.load(osp.join(s2_folder_path, f"{s2_index}.npy"), allow_pickle=True)
                         all_bands.append(band)
 
                 input_tensor = create_tensor(all_bands)
-
                 pred = model(input_tensor.unsqueeze(0))
-
                 pred = pred.cpu().squeeze().detach().numpy()
-
                 all_months.append(pred)
 
         count = len(all_months)
