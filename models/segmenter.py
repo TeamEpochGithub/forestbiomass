@@ -102,7 +102,7 @@ class SegmentationDatasetMakerTIFF(Dataset):
             S2_bands = [x for x, y in zip(S2_bands, self.S2_bands) if y == 1]
             bands.extend(S2_bands)
 
-        feature_tensor = torch.tensor(np.asarray(bands))
+        feature_tensor = create_tensor(bands)
 
         if self.transform:
             feature_tensor = self.transform(feature_tensor)
@@ -355,6 +355,69 @@ def create_submissions(args):
                 pred = pred.cpu().squeeze().detach().numpy()
 
                 all_months.append(pred)
+
+        count = len(all_months)
+
+        if count == 0:
+            continue
+
+        agbm_arr = np.asarray(sum(all_months) / count)
+
+        test_agbm_path = osp.join(args.submission_folder_path, f"{id}_agbm.tif")
+
+        im = Image.fromarray(agbm_arr)
+        im.save(test_agbm_path)
+
+        if index % 100 == 0:
+            print(f"{index} / {total}")
+
+
+def create_submissions_tiff(args):
+
+    model = load_model(args)
+
+    test_data_path = args.testing_features_path
+
+    with open(args.testing_ids_path, newline='') as f:
+        reader = csv.reader(f)
+        patch_name_data = list(reader)
+    patch_names = patch_name_data[0]
+
+    total = len(patch_names)
+
+    for index, id in enumerate(patch_names):
+
+        all_months = []
+
+        for month in range(0, 12):
+
+            if month < 10:
+                month = f"0{month}"
+            else:
+                month = f"{month}"
+
+            S1_data_path = osp.join(test_data_path, f"{id}_S1_{month}.tif")
+            S2_data_path = osp.join(test_data_path, f"{id}_S2_{month}.tif")
+
+            bands = []
+
+            if args.S1band_selection.count(1) >= 1:
+                S1_bands = rasterio.open(S1_data_path).read().astype(np.float32)
+                S1_bands = [x for x, y in zip(S1_bands, args.S1band_selection) if y == 1]
+                bands.extend(S1_bands)
+
+            if args.S2band_selection.count(1) >= 1:
+                S2_bands = rasterio.open(S2_data_path).read().astype(np.float32)
+                S2_bands = [x for x, y in zip(S2_bands, args.S2band_selection) if y == 1]
+                bands.extend(S2_bands)
+
+            feature_tensor = create_tensor(bands)
+
+            pred = model(feature_tensor.unsqueeze(0))
+
+            pred = pred.cpu().squeeze().detach().numpy()
+
+            all_months.append(pred)
 
         count = len(all_months)
 
