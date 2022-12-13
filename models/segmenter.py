@@ -110,7 +110,6 @@ def prepare_dataset(training_ids_path, training_features_path, S1_band_selection
         reader = csv.reader(f)
         patch_name_data = list(reader)
     patch_names = patch_name_data[0]
-    patch_names = patch_names[:100]
 
     patch_month_non_missing = []
     for patch in patch_names:
