@@ -40,7 +40,7 @@ def create_model(base_model, base_weights):
 
 
 def get_patch_names():
-    with open(osp.join(osp.dirname(data.__file__), 'patch_name_test'), newline='') as f:
+    with open(osp.join(osp.dirname(data.__file__), 'patch_names'), newline='') as f:
         reader = csv.reader(f)
         patch_name_data = list(reader)
 
@@ -113,7 +113,7 @@ class DataGeneratorNpy(tf.keras.utils.Sequence):
             - Therefore, we want all filenames and labels to be determined before training
             - This saves work, because we will be fetching batches multiple times (across epochs)
         """
-        self.dir_path = r'C:\Users\kuipe\OneDrive\Bureaublad\Epoch\forestbiomass\data\test/'
+        self.dir_path = r'C:\Users\kuipe\Desktop\Epoch\forestbiomass\data\converted/'
         # Get all filenames in directory
         self.patches = patch_ids
         # Include batch size as attribute
@@ -177,5 +177,13 @@ if __name__ == '__main__':
     # model = create_model_test(base_weights)
     patch_names = get_patch_names()
     datagen = DataGeneratorNpy(patch_names)
+    checkpoint_filepath = '/tmp/checkpoint'
+    model_checkpoint_callback = tf.keras.callbacks.ModelCheckpoint(
+        filepath=checkpoint_filepath,
+        save_weights_only=True,
+        monitor='val_accuracy',
+        mode='max',
+        save_best_only=True)
+
     # Use data generator to fit on model
-    model.fit(datagen, epochs=100)
+    model.fit(datagen, epochs=10, callbacks=[model_checkpoint_callback])
