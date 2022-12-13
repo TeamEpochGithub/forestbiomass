@@ -399,8 +399,8 @@ def create_submissions_tiff(args):
             else:
                 month = f"{month}"
 
-            S1_data_path = osp.join(args.training_features_path, f"{id}_S1_{month}.tif")
-            S2_data_path = osp.join(args.training_features_path, f"{id}_S2_{month}.tif")
+            S1_data_path = osp.join(test_data_path, f"{id}_S1_{month}.tif")
+            S2_data_path = osp.join(test_data_path, f"{id}_S2_{month}.tif")
 
             bands = []
 
