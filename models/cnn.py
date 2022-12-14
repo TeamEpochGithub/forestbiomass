@@ -6,7 +6,8 @@ import os
 import os.path as osp
 import csv
 import data
-
+from models.utils.check_corrupted import is_corrupted
+from PIL import Image
 
 class CNNModel(tf.keras.Model):
     def __init__(self, base, weights):
@@ -39,8 +40,8 @@ def create_model(base_model, base_weights):
     return model
 
 
-def get_patch_names():
-    with open(osp.join(osp.dirname(data.__file__), 'patch_name_test'), newline='') as f:
+def get_patch_names(patch_file):
+    with open(osp.join(osp.dirname(data.__file__), patch_file), newline='') as f:
         reader = csv.reader(f)
         patch_name_data = list(reader)
 
@@ -105,6 +106,69 @@ class DataGeneratorTif(tf.keras.utils.Sequence):
         return np.asarray(batch_x), np.asarray(batch_y)
 
 class DataGeneratorNpy(tf.keras.utils.Sequence):
+    def __init__(self, patch_ids, batch_size=4, mode='train'):
+        """
+        Few things to mention:
+            - The data generator tells our model how to fetch one batch of training data (in this case from files)
+            - Any work that can be done before training, should be done in init, since we want fetching a batch to be fast
+            - Therefore, we want all filenames and labels to be determined before training
+            - This saves work, because we will be fetching batches multiple times (across epochs)
+        """
+        self.dir_path = r'C:\Users\kuipe\OneDrive\Bureaublad\Epoch\forestbiomass\data\test/'
+        # Get all filenames in directory
+        self.patches = patch_ids
+        # Include batch size as attribute
+        self.batch_size = batch_size
+        self.mode = mode
+
+    def __len__(self):
+        """
+        Should return the number of BATCHES the generator can retrieve (partial batch at end counts as well)
+        """
+        return int(np.ceil(len(self.patches) / float(self.batch_size)))
+
+    def __getitem__(self, idx):
+        """
+        Tells generator how to retrieve BATCH idx
+        """
+
+        # Get filenames for X batch
+        batch_patches = self.patches[idx * self.batch_size:(idx + 1) * self.batch_size]
+        batch_labels = [self.dir_path + p + '/label.npy' for p in batch_patches]
+
+        batch_x = []
+        batch_y = []
+        # Get labels per patch.
+        for label_npy in batch_labels:
+            label = np.load(label_npy).reshape(256 * 256)
+            batch_y.append(label)
+
+        # Get all possible s2 bands that are available per patch
+        for p in batch_patches:
+
+            s2_patch = []
+            for month in range(12):
+                s2_month = []
+
+                # Check if S2 data exists for a specific month
+                try:
+                    bands = [osp.join(self.dir_path + p + f'/{month}/S2/', file) for file in os.listdir(self.dir_path + p + f'/{month}/S2')]
+                    for band in bands:
+                        s2_month.append(np.load(band))
+                    s2_patch.append(s2_month)
+                except:
+                    continue
+
+            # average all the bands per patch together.
+            average = np.average(s2_patch, axis=0)
+            # Reshape it so that the CNN model can take the data in. 11 is the number of channels.
+            average = average.reshape(256, 256, 11)
+            batch_x.append(average)
+
+        return np.asarray(batch_x), np.asarray(batch_y) if self.mode=="train" else np.asarray(batch_x)
+
+# Datagenerator kicks patch out if there is corrupted bands within.
+class DataGeneratorNpyClean(tf.keras.utils.Sequence):
     def __init__(self, patch_ids, batch_size=4):
         """
         Few things to mention:
@@ -142,6 +206,7 @@ class DataGeneratorNpy(tf.keras.utils.Sequence):
             batch_y.append(label)
 
         # Get all possible s2 bands that are available per patch
+        index = 0
         for p in batch_patches:
 
             s2_patch = []
@@ -151,23 +216,51 @@ class DataGeneratorNpy(tf.keras.utils.Sequence):
                 # Check if S2 data exists for a specific month
                 try:
                     bands = [osp.join(self.dir_path + p + f'/{month}/S2/', file) for file in os.listdir(self.dir_path + p + f'/{month}/S2')]
+                    corrupted = False
                     for band in bands:
-                        s2_month.append(np.load(band))
+                        load = np.load(band)
+                        if is_corrupted(load):
+                            corrupted=True
+                            break
+                        s2_month.append(load)
+
+                    s2_patch.append(s2_month)
                 except:
                     continue
 
-                s2_patch.append(s2_month)
+                if corrupted:
+                    break
+
+            if corrupted:
+                batch_y.pop(index)
+                continue
 
             # average all the bands per patch together.
             average = np.average(s2_patch, axis=0)
             # Reshape it so that the CNN model can take the data in. 11 is the number of channels.
             average = average.reshape(256, 256, 11)
             batch_x.append(average)
+            index+=1
 
         return np.asarray(batch_x), np.asarray(batch_y)
+# def create_data_generator(mode):
 
-def create_data_generator(mode):
+def create_submissions():
+    submission_path = r'C:\Users\kuipe\OneDrive\Bureaublad\Epoch\forestbiomass\data\test_agbm'
 
+    # Get patches of test data
+    test_patches = get_patch_names('patch_name_test')
+    predict_datagen = DataGeneratorNpy(test_patches, mode="test")
+    # Load weights in of the best checkpoint
+    model.load_weights(checkpoint_filepath)
+    predictions = model.predict(predict_datagen)
+    # Save tif files to directory to make a prediction
+    print(predictions[0])
+    for i in range(len(test_patches)):
+        test_agbm_path = osp.join(submission_path, f'{test_patches[i]}_agbm.tif')
+        pred = predictions[i].reshape(256, 256)
+        im = Image.fromarray(pred)
+        im.save(test_agbm_path)
 
 if __name__ == '__main__':
     # Change this to some pretrained cnn of keras
@@ -177,7 +270,30 @@ if __name__ == '__main__':
     # Create model
     model = create_model(base_model, base_weights)
     # Get patch names to feed in data generator.
-    patch_names = get_patch_names()
-    datagen = DataGeneratorNpy(patch_names)
+    patch_names = get_patch_names('patch_name_test')
+    datagen = DataGeneratorNpyClean(patch_names)
+    x, y = datagen[0]
+    print(x.shape)
+    # # Save checkpoints
+    # checkpoint_filepath = './tmp/checkpoint_temp/{epoch:02d}.hdf5'
+    checkpoint_filepath = './tmp/checkpoint.hdf5'
+    model_checkpoint_callback = tf.keras.callbacks.ModelCheckpoint(
+        filepath=checkpoint_filepath,
+        save_weights_only=True,
+        monitor='loss',
+        mode='min',
+        save_best_only=True
+    )
+
     # Use data generator to fit on model
-    model.fit(datagen, epochs=100)
+    model.fit(datagen,
+              epochs=5,
+              verbose=1,
+              callbacks=[model_checkpoint_callback],
+              # max_queue_size=20,
+              # workers=20,
+              # use_multiprocessing=True
+    )
+    create_submissions()
+
+
