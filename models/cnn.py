@@ -166,6 +166,9 @@ class DataGeneratorNpy(tf.keras.utils.Sequence):
 
         return np.asarray(batch_x), np.asarray(batch_y)
 
+def create_data_generator(mode):
+
+
 if __name__ == '__main__':
     # Change this to some pretrained cnn of keras
     # Check this link for different models: https://www.tensorflow.org/api_docs/python/tf/keras/applications
