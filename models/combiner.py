@@ -25,7 +25,7 @@ import argparse
 warnings.filterwarnings("ignore", category=rasterio.errors.NotGeoreferencedWarning)
 
 
-class SegmentationDatasetMaker(Dataset):
+class CombinationDatasetMaker(Dataset):
     def __init__(self, training_data_path, id_month_list, s1_bands, s2_bands, transform=None):
         self.training_data_path = training_data_path
         self.id_month_list = id_month_list
@@ -58,7 +58,7 @@ class SegmentationDatasetMaker(Dataset):
                 band = np.load(osp.join(self.training_data_path, id, month, "S2", f"{index}.npy"), allow_pickle=True)
                 arr_list.append(band)
 
-        data_tensor = create_tensor_from_bands_list(arr_list)
+        data_tensor = create_tensor(arr_list)
 
         if self.transform:
             data_tensor = self.transform(data_tensor)
@@ -66,7 +66,7 @@ class SegmentationDatasetMaker(Dataset):
         return data_tensor, label_tensor
 
 
-class SegmentationDatasetMakerTIFF(Dataset):
+class CombinationDatasetMakerTIFF(Dataset):
     def __init__(self, training_feature_path, training_label_path, id_month_list, S1_bands, S2_bands, transform=None):
         self.training_feature_path = training_feature_path
         self.training_label_path = training_label_path
@@ -86,7 +86,7 @@ class SegmentationDatasetMakerTIFF(Dataset):
         label_tensor = torch.tensor(rasterio.open(label_path).read().astype(np.float32))
 
         if int(month) < 10:
-            month = "0"+month
+            month = "0" + month
 
         S1_data_path = osp.join(self.training_feature_path, f"{id}_S1_{month}.tif")
         S2_data_path = osp.join(self.training_feature_path, f"{id}_S2_{month}.tif")
@@ -103,7 +103,7 @@ class SegmentationDatasetMakerTIFF(Dataset):
             S2_bands = [x for x, y in zip(S2_bands, self.S2_bands) if y == 1]
             bands.extend(S2_bands)
 
-        feature_tensor = create_tensor_from_bands_list(bands)
+        feature_tensor = create_tensor(bands)
 
         if self.transform:
             feature_tensor = self.transform(feature_tensor)
@@ -111,7 +111,7 @@ class SegmentationDatasetMakerTIFF(Dataset):
         return feature_tensor, label_tensor
 
 
-class Segmenter(pl.LightningModule):
+class Combiner(pl.LightningModule):
     def __init__(self, model, learning_rate, loss_function):
         super().__init__()
         self.model = model
@@ -129,7 +129,7 @@ class Segmenter(pl.LightningModule):
         x, y = batch
         y_hat = self.model(x)
         loss = self.loss_function(y_hat, y)
-        self.log("val/loss", loss)
+        self.log("train/loss", loss)
         return loss
 
     def configure_optimizers(self):
@@ -139,8 +139,7 @@ class Segmenter(pl.LightningModule):
         return self.model(x)
 
 
-def prepare_dataset_converted(training_ids_path, training_features_path, S1_band_selection, S2_band_selection):
-
+def prepare_dataset(training_ids_path, training_features_path, S1_band_selection, S2_band_selection):
     with open(training_ids_path, newline='') as f:
         reader = csv.reader(f)
         patch_name_data = list(reader)
@@ -154,12 +153,12 @@ def prepare_dataset_converted(training_ids_path, training_features_path, S1_band
             if osp.exists(osp.join(month_patch_path, "S2")):
                 id_month_list.append((id, str(month)))
 
-    new_dataset = SegmentationDatasetMaker(training_features_path, id_month_list, S1_band_selection,
-                                           S2_band_selection)
+    new_dataset = CombinationDatasetMaker(training_features_path, id_month_list, S1_band_selection,
+                                          S2_band_selection)
     return new_dataset, (S1_band_selection.count(1) + S2_band_selection.count(1))
 
 
-def prepare_dataset_tiff(training_ids_path, training_features_path, training_labels_path, S1_band_selection, S2_band_selection):
+def prepare_dataset_tiff(training_ids_path, training_features_path, S1_band_selection, S2_band_selection):
     with open(training_ids_path, newline='') as f:
         reader = csv.reader(f)
         patch_name_data = list(reader)
@@ -169,17 +168,19 @@ def prepare_dataset_tiff(training_ids_path, training_features_path, training_lab
     for id in chip_ids:
         for month in range(0, 12):
 
-            month_patch_path = osp.join(training_features_path, f"{id}_S2_{month:02}.tif")
+            month_patch_path = osp.join(training_features_path, "train_features", f"{id}_S2_{month:02}.tif")
             if osp.exists(month_patch_path):
                 id_month_list.append((id, str(month)))
 
-    new_dataset = SegmentationDatasetMakerTIFF(training_features_path, training_labels_path, id_month_list, S1_band_selection,
-                                               S2_band_selection)
+    features_path = osp.join(training_features_path, "train_features")
+    labels_path = osp.join(training_features_path, "train_agbm")
+
+    new_dataset = CombinationDatasetMakerTIFF(features_path, labels_path, id_month_list, S1_band_selection,
+                                              S2_band_selection)
     return new_dataset, (S1_band_selection.count(1) + S2_band_selection.count(1))
 
 
 def select_segmenter(args):
-
     channel_count = (args.S1_band_selection.count(1) + args.S2_band_selection.count(1))
 
     if args.segmenter_name == "Unet":
@@ -197,7 +198,7 @@ def select_segmenter(args):
     return base_model
 
 
-def create_tensor_from_bands_list(band_list):
+def create_tensor(band_list):
     band_array = np.asarray(band_list, dtype=np.float32)
 
     band_tensor = torch.tensor(band_array)
@@ -210,32 +211,20 @@ def create_tensor_from_bands_list(band_list):
 
 
 def train(args):
-
     print("Getting train data...")
 
-    if args.data_type == "npy":
-        train_dataset, number_of_channels = prepare_dataset_converted(args.training_ids_path,
-                                                                      args.converted_training_features_path,
-                                                                      args.S1_band_selection,
-                                                                      args.S2_band_selection)
-    elif args.data_type == "tiff":
-        train_dataset, number_of_channels = prepare_dataset_tiff(args.training_ids_path,
-                                                                 args.tiff_training_features_path,
-                                                                 args.tiff_training_labels_path,
-                                                                 args.S1_band_selection,
-                                                                 args.S2_band_selection)
-    else:
-        train_dataset, number_of_channels = (None, None)
-
-    assert train_dataset is not None, "Invalid data type selected"
+    train_dataset, number_of_channels = prepare_dataset_tiff(args.training_ids_path, args.training_features_path,
+                                                             args.S1_band_selection, args.S2_band_selection)
 
     train_size = int(1 - args.validation_fraction * len(train_dataset))
     valid_size = len(train_dataset) - train_size
 
     train_set, val_set = torch.utils.data.random_split(train_dataset, [train_size, valid_size])
 
-    train_dataloader = DataLoader(train_set, batch_size=args.batch_size, shuffle=True, num_workers=args.dataloader_workers)
-    valid_dataloader = DataLoader(val_set, batch_size=args.batch_size, shuffle=False, num_workers=args.dataloader_workers)
+    train_dataloader = DataLoader(train_set, batch_size=args.batch_size, shuffle=True,
+                                  num_workers=args.dataloader_workers)
+    valid_dataloader = DataLoader(val_set, batch_size=args.batch_size, shuffle=False,
+                                  num_workers=args.dataloader_workers)
 
     base_model = select_segmenter(args)
 
@@ -255,7 +244,7 @@ def train(args):
 
     checkpoint_callback = ModelCheckpoint(
         save_top_k=args.save_top_k_checkpoints,
-        monitor="val/loss",
+        monitor="train/loss",
         mode="min",
     )
 
@@ -274,7 +263,6 @@ def train(args):
 
 
 def load_model(args):
-
     print("Getting saved model...")
 
     assert osp.exists(args.current_model_path) is True, "requested model does not exist"
@@ -317,16 +305,6 @@ def load_model(args):
 
 
 def create_submissions(args):
-    if args.data_type == "npy":
-        create_submissions_converted(args)
-    elif args.data_type == "tiff":
-        create_submissions_tiff(args)
-    else:
-        print("Invalid data type selected")
-
-
-def create_submissions_converted(args):
-
     model = load_model(args)
 
     test_data_path = args.testing_features_path
@@ -368,7 +346,7 @@ def create_submissions_converted(args):
                         band = np.load(osp.join(s2_folder_path, f"{s2_index}.npy"), allow_pickle=True)
                         all_bands.append(band)
 
-                input_tensor = create_tensor_from_bands_list(all_bands)
+                input_tensor = create_tensor(all_bands)
 
                 pred = model(input_tensor.unsqueeze(0))
 
@@ -393,10 +371,9 @@ def create_submissions_converted(args):
 
 
 def create_submissions_tiff(args):
-
     model = load_model(args)
 
-    test_data_path = args.tiff_testing_features_path
+    test_data_path = args.testing_features_path
 
     with open(args.testing_ids_path, newline='') as f:
         reader = csv.reader(f)
@@ -421,20 +398,17 @@ def create_submissions_tiff(args):
 
             bands = []
 
-            if args.S1_band_selection.count(1) >= 1:
+            if args.S1band_selection.count(1) >= 1:
                 S1_bands = rasterio.open(S1_data_path).read().astype(np.float32)
-                S1_bands = [x for x, y in zip(S1_bands, args.S1_band_selection) if y == 1]
+                S1_bands = [x for x, y in zip(S1_bands, args.S1band_selection) if y == 1]
                 bands.extend(S1_bands)
 
-            if args.S2_band_selection.count(1) >= 1:
+            if args.S2band_selection.count(1) >= 1:
                 S2_bands = rasterio.open(S2_data_path).read().astype(np.float32)
-                S2_bands = [x for x, y in zip(S2_bands, args.S2_band_selection) if y == 1]
+                S2_bands = [x for x, y in zip(S2_bands, args.S2band_selection) if y == 1]
                 bands.extend(S2_bands)
 
-            if len(bands) == 0:
-                continue
-
-            feature_tensor = create_tensor_from_bands_list(bands)
+            feature_tensor = create_tensor(bands)
 
             pred = model(feature_tensor.unsqueeze(0))
 
@@ -459,12 +433,10 @@ def create_submissions_tiff(args):
 
 
 def set_args():
-
     model_segmenter = "Unet"
     model_encoder = "efficientnet-b2"
     model_encoder_weights = "imagenet"  # Leave None if not using weights.
-    data_type = "tiff"  # options are "npy" or "tiff"
-    epochs = 3
+    epochs = 5
     learning_rate = 1e-4
     dataloader_workers = 6
     validation_fraction = 0.2
@@ -513,23 +485,15 @@ def set_args():
     parser.add_argument('--encoder_name', default=model_encoder, type=str)
     parser.add_argument('--encoder_weights', default=model_encoder_weights, type=str)
     parser.add_argument('--model_version', default=version, type=int)
-    parser.add_argument('--data_type', default=data_type, type=str)
 
     data_path = osp.dirname(data.__file__)
     models_path = osp.dirname(models.__file__)
-
-    # Note: Converted data does not have an explicit label path, as labels are stored within training_features
-    parser.add_argument('--converted_training_features_path', default=str(osp.join(data_path, "converted")), type=str)
-    parser.add_argument('--converted_testing_features_path', default=str(osp.join(data_path, "testing_converted")), type=str)
-
-    parser.add_argument('--tiff_training_features_path', default=str(osp.join(data_path, "imgs", "train_features")))
-    parser.add_argument('--tiff_training_labels_path', default=str(osp.join(data_path, "imgs", "train_agbm")))
-    parser.add_argument('--tiff_testing_features_path', default=str(osp.join(data_path, "imgs", "test_features")))
-
+    parser.add_argument('--training_features_path', default=str(osp.join(data_path, "imgs")), type=str)
     parser.add_argument('--training_ids_path', default=str(osp.join(data_path, "patch_names")), type=str)
+    parser.add_argument('--testing_features_path', default=str(osp.join(data_path, "testing_converted")), type=str)
     parser.add_argument('--testing_ids_path', default=str(osp.join(data_path, "test_patch_names")), type=str)
-
-    parser.add_argument('--current_model_path', default=str(osp.join(models_path, "tb_logs", model_identifier)), type=str)
+    parser.add_argument('--current_model_path', default=str(osp.join(models_path, "tb_logs", model_identifier)),
+                        type=str)
     parser.add_argument('--submission_folder_path', default=str(osp.join(data_path, "imgs", "test_agbm")), type=str)
 
     parser.add_argument('--dataloader_workers', default=dataloader_workers, type=int)
@@ -553,8 +517,8 @@ def set_args():
 
     return args
 
+
 if __name__ == '__main__':
     args = set_args()
-    #train(args)
+    train(args)
     create_submissions(args)
-
