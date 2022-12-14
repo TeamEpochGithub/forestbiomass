@@ -220,13 +220,16 @@ def train(args):
     )
 
     trainer = Trainer(
-        accelerator="gpu",
+        # accelerator="gpu",
         devices=1,
         max_epochs=args.epochs,
         logger=[logger],
         log_every_n_steps=args.log_step_frequency,
         callbacks=[checkpoint_callback],
-        num_sanity_val_steps=0
+        num_sanity_val_steps=0,
+        gpus=8,
+        # num_nodes=4,
+        strategy="ddp"
     )
 
     trainer.fit(model, train_dataloaders=train_dataloader, val_dataloaders=valid_dataloader)

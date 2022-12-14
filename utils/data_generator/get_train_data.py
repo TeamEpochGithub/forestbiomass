@@ -3,12 +3,11 @@ import os
 import os.path as osp
 
 import numpy as np
+import rasterio
 
 import data
-from osgeo import gdal, ogr  # https://opensourceoptions.com/blog/how-to-install-gdal-for-python-with-pip-on-windows/
+# from osgeo import gdal  # https://opensourceoptions.com/blog/how-to-install-gdal-for-python-with-pip-on-windows/
 import data.imgs as img_data
-
-gdal.PushErrorHandler('CPLQuietErrorHandler')
 
 
 def get_all_patches() -> dict:
@@ -30,8 +29,8 @@ def get_all_patches() -> dict:
             all_data[current_filename] = {}
         else:
             img_path = osp.join(train_data_path, filename)
-            dataset = gdal.Open(img_path)
-            data = dataset.ReadAsArray()
+            with rasterio.open(img_path) as image:
+                data = image.read()
             all_data[current_filename][filename] = data
 
     return all_data
@@ -62,21 +61,11 @@ def get_n_patches(n: int) -> dict:
             all_data[current_filename] = {}
         else:
             img_path = osp.join(train_data_path, filename)
-            dataset = gdal.Open(img_path)
-            data = dataset.ReadAsArray()
+            with rasterio.open(img_path) as image:
+                data = image.read()
             all_data[current_filename][filename] = data
 
     return all_data
-
-
-def convert_path_to_gdal_dataset(path: str) -> gdal.Dataset:
-    dataset = gdal.Open(path)
-    return dataset
-
-
-def convert_gdal_dataset_to_ndarray(dataset: gdal.Dataset) -> np.ndarray:
-    data = dataset.ReadAsArray()
-    return data
 
 
 def save_ndarray(relative_path: str, name: str, numpy_data: np.ndarray):
@@ -90,10 +79,13 @@ def save_ndarray(relative_path: str, name: str, numpy_data: np.ndarray):
 def get_data_from_path(path: str):
     train_data_path = osp.join(osp.dirname(img_data.__file__), "train_features")
     img_path = osp.join(train_data_path, path)
-    dataset = convert_path_to_gdal_dataset(img_path)
-    if dataset is None:
+
+    try:
+        with rasterio.open(img_path) as image:
+            data = image.read()
+    except:
         return None
-    data = convert_gdal_dataset_to_ndarray(dataset)
+
     return data
 
 
@@ -222,6 +214,4 @@ def save_all_testing_patches():
                     save_s2_path = osp.join(test_data_converted_path, patch, str(month), "S2")
                     save_ndarray(save_s2_path, str(band), d)
 
-
-if __name__ == '__main__':
-    save_all_testing_patches()
+# if __name__ == '__main__':
