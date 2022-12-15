@@ -29,8 +29,8 @@ warnings.filterwarnings("ignore", category=rasterio.errors.NotGeoreferencedWarni
 
 
 class SegmentationDatasetMakerConverted(Dataset):
-    def __init__(self, training_data_path, id_month_list, s1_bands, s2_bands, transform=None):
-        self.training_data_path = training_data_path
+    def __init__(self, training_feature_path, id_month_list, s1_bands, s2_bands, transform=None):
+        self.training_feature_path = training_feature_path
         self.id_month_list = id_month_list
         self.s1_bands = s1_bands
         self.s2_bands = s2_bands
@@ -43,7 +43,7 @@ class SegmentationDatasetMakerConverted(Dataset):
 
         id, month = self.id_month_list[idx]
 
-        label_path = osp.join(self.training_data_path, id, "label.npy")
+        label_path = osp.join(self.training_feature_path, id, "label.npy")
         label = np.load(label_path, allow_pickle=True)
         label_tensor = torch.tensor(np.asarray([label], dtype=np.float32))
 
@@ -52,13 +52,13 @@ class SegmentationDatasetMakerConverted(Dataset):
         for index, s1_index in enumerate(self.s1_bands):
 
             if s1_index == 1:
-                band = np.load(osp.join(self.training_data_path, id, month, "S1", f"{index}.npy"), allow_pickle=True)
+                band = np.load(osp.join(self.training_feature_path, id, month, "S1", f"{index}.npy"), allow_pickle=True)
                 arr_list.append(band)
 
         for index, s2_index in enumerate(self.s2_bands):
 
             if s2_index == 1:
-                band = np.load(osp.join(self.training_data_path, id, month, "S2", f"{index}.npy"), allow_pickle=True)
+                band = np.load(osp.join(self.training_feature_path, id, month, "S2", f"{index}.npy"), allow_pickle=True)
                 arr_list.append(band)
 
         data_tensor = create_tensor_from_bands_list(arr_list)
@@ -114,7 +114,7 @@ class SegmentationDatasetMakerTIFF(Dataset):
         return feature_tensor, label_tensor
 
 
-class ConvertedSubmissionDataset(Dataset):
+class SubmissionDatasetMakerConverted(Dataset):
     def __init__(self, training_data_path, id_month_list, s1_bands, s2_bands, transform=None):
         self.training_data_path = training_data_path
         self.id_month_list = id_month_list
@@ -149,6 +149,47 @@ class ConvertedSubmissionDataset(Dataset):
             data_tensor = self.transform(data_tensor)
 
         return data_tensor
+
+
+class SubmissionDatasetMakerTiff(Dataset):
+    def __init__(self, training_feature_path, id_month_list, S1_bands, S2_bands, transform=None):
+        self.training_feature_path = training_feature_path
+        self.id_month_list = id_month_list
+        self.S1_bands = S1_bands
+        self.S2_bands = S2_bands
+        self.transform = transform
+
+    def __len__(self):
+        return len(self.id_month_list)
+
+    def __getitem__(self, idx):
+
+        id, month = self.id_month_list[idx]
+
+        if int(month) < 10:
+            month = "0" + month
+
+        S1_data_path = osp.join(self.training_feature_path, f"{id}_S1_{month}.tif")
+        S2_data_path = osp.join(self.training_feature_path, f"{id}_S2_{month}.tif")
+
+        bands = []
+
+        if self.S1_bands.count(1) >= 1:
+            S1_bands = rasterio.open(S1_data_path).read().astype(np.float32)
+            S1_bands = [x for x, y in zip(S1_bands, self.S1_bands) if y == 1]
+            bands.extend(S1_bands)
+
+        if self.S2_bands.count(1) >= 1:
+            S2_bands = rasterio.open(S2_data_path).read().astype(np.float32)
+            S2_bands = [x for x, y in zip(S2_bands, self.S2_bands) if y == 1]
+            bands.extend(S2_bands)
+
+        feature_tensor = create_tensor_from_bands_list(bands)
+
+        if self.transform:
+            feature_tensor = self.transform(feature_tensor)
+
+        return feature_tensor
 
 
 class Segmenter(pl.LightningModule):
@@ -500,33 +541,55 @@ def create_submissions_tiff(args):
 def accumulate_predictions(l):
     it = itertools.groupby(l, operator.itemgetter(0))
     for key, subiter in it:
-        count = len(list(subiter))
-        # TODO: Fix that this things turns tensors to 0
-        yield key, sum(item[1] for item in subiter) / count
+        group_list = list(subiter)
+        total = sum(tensors for tensor_id, tensors in group_list)
+        yield key, total / len(group_list)
 
 
 def experimental_submission(args):
 
     model = load_model(args)
 
-    chip_ids = os.listdir(args.converted_training_features_path)[:-1]
+    with open(args.testing_ids_path, newline='') as f:
+        reader = csv.reader(f)
+        patch_name_data = list(reader)
+    chip_ids = patch_name_data[0]
 
     id_month_list = []
-    for id in chip_ids:
-        for month in range(0, 12):
 
-            month_patch_path = osp.join(args.converted_training_features_path, id, str(month))
-            if osp.exists(osp.join(month_patch_path, "S2")):
-                id_month_list.append((id, str(month)))
+    if args.data_type == "npy":
 
-    print(chip_ids)
-    print(id_month_list)
+        for id in chip_ids:
+            for month in range(0, 12):
+                month_patch_path = osp.join(args.converted_testing_features_path, id, str(month))
+                if osp.exists(osp.join(month_patch_path, "S2")):
+                    id_month_list.append((id, str(month)))
 
-    new_dataset = ConvertedSubmissionDataset(args.converted_training_features_path, id_month_list, args.S1_band_selection, args.S2_band_selection)
+        new_dataset = SubmissionDatasetMakerConverted(args.converted_testing_features_path,
+                                                      id_month_list,
+                                                      args.S1_band_selection,
+                                                      args.S2_band_selection)
 
-    trainer = Trainer()
+    elif args.data_type == "tiff":
 
-    dl = DataLoader(new_dataset)
+        for id in chip_ids:
+            for month in range(0, 12):
+
+                month_patch_path = osp.join(args.tiff_testing_features_path, f"{id}_S2_{month:02}.tif")
+                if osp.exists(month_patch_path):
+                    id_month_list.append((id, str(month)))
+
+        new_dataset = SubmissionDatasetMakerTiff(args.tiff_testing_features_path,
+                                                 id_month_list,
+                                                 args.S1_band_selection,
+                                                 args.S2_band_selection)
+
+    else:
+        sys.exit("Error: Invalid data type selected.")
+
+    trainer = Trainer(accelerator="gpu", devices=1)
+
+    dl = DataLoader(new_dataset, num_workers=6)
 
     predictions = trainer.predict(model, dataloaders=dl)
 
@@ -540,7 +603,17 @@ def experimental_submission(args):
 
     averaged_tensor_list = list(accumulate_predictions(linked_tensor_list))
 
-    print(averaged_tensor_list)
+    for id_tensor_pair in averaged_tensor_list:
+
+        current_id = id_tensor_pair[0]
+        current_tensor = id_tensor_pair[1]
+
+        agbm_path = osp.join(args.submission_folder_path, f"{current_id}_agbm.tif")
+
+        im = Image.fromarray(current_tensor)
+        im.save(agbm_path)
+
+    print("Finished creating submission.")
 
 
 def set_args():
