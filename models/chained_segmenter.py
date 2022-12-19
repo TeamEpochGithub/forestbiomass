@@ -1,3 +1,5 @@
+import itertools
+import operator
 import sys
 
 import torch
@@ -22,114 +24,200 @@ from models.utils import loss_functions
 from pytorch_lightning.strategies import DDPStrategy
 import argparse
 
+
 warnings.filterwarnings("ignore", category=rasterio.errors.NotGeoreferencedWarning)
 
 
-class SegmentationDatasetMaker(Dataset):
-    def __init__(self, training_data_path, id_month_list, s1_bands, s2_bands, transform=None):
-        self.training_data_path = training_data_path
-        self.id_month_list = id_month_list
-        self.s1_bands = s1_bands
-        self.s2_bands = s2_bands
-        self.transform = transform
-
-    def __len__(self):
-        return len(self.id_month_list)
-
-    def __getitem__(self, idx):
-
-        id, month = self.id_month_list[idx]
-
-        label_path = osp.join(self.training_data_path, id, "label.npy")
-        label = np.load(label_path, allow_pickle=True)
-        label_tensor = torch.tensor(np.asarray([label], dtype=np.float32))
-
-        arr_list = []
-
-        for index, s1_index in enumerate(self.s1_bands):
-
-            if s1_index == 1:
-                band = np.load(osp.join(self.training_data_path, id, month, "S1", f"{index}.npy"), allow_pickle=True)
-                arr_list.append(band)
-
-        for index, s2_index in enumerate(self.s2_bands):
-
-            if s2_index == 1:
-                band = np.load(osp.join(self.training_data_path, id, month, "S2", f"{index}.npy"), allow_pickle=True)
-                arr_list.append(band)
-
-        data_tensor = create_tensor_from_bands_list(arr_list)
-
-        if self.transform:
-            data_tensor = self.transform(data_tensor)
-
-        return data_tensor, label_tensor
-
-
-class SegmentationDatasetMakerTIFF(Dataset):
-    def __init__(self, training_feature_path, training_label_path, id_month_list, S1_bands, S2_bands, transform=None):
+class ChainedSegmentationDatasetMaker(Dataset):
+    def __init__(self, training_feature_path, training_labels_path, id_list, data_type, S1_bands, S2_bands, month_selection, transform=None):
         self.training_feature_path = training_feature_path
-        self.training_label_path = training_label_path
-        self.id_month_list = id_month_list
+        self.training_labels_path = training_labels_path
+        self.id_list = id_list
+        self.data_type = data_type
         self.S1_bands = S1_bands
         self.S2_bands = S2_bands
         self.transform = transform
+        self.month_selection = month_selection
 
     def __len__(self):
-        return len(self.id_month_list)
+        return len(self.id_list)
 
     def __getitem__(self, idx):
 
-        id, month = self.id_month_list[idx]
+        id = self.id_list[idx]
 
-        label_path = osp.join(self.training_label_path, f"{id}_agbm.tif")
-        label_tensor = torch.tensor(rasterio.open(label_path).read().astype(np.float32))
+        if self.data_type == "npy":
+            label_path = osp.join(self.training_feature_path, id, "label.npy")
+            label = np.load(label_path, allow_pickle=True)
+            label_tensor = torch.tensor(np.asarray([label], dtype=np.float32))
+        elif self.data_type == "tiff":
+            label_path = osp.join(self.training_labels_path, f"{id}_agbm.tif")
+            label_tensor = torch.tensor(rasterio.open(label_path).read().astype(np.float32))
+        else:
+            sys.exit("Incorrect data type passed to dataloader maker")
 
-        if int(month) < 10:
-            month = "0"+month
+        tensor_list = []
 
-        S1_data_path = osp.join(self.training_feature_path, f"{id}_S1_{month}.tif")
-        S2_data_path = osp.join(self.training_feature_path, f"{id}_S2_{month}.tif")
+        for month_index, month_indicator in enumerate(self.month_selection):
 
-        bands = []
+            if self.data_type == "npy":
+                feature_tensor = retrieve_npy(self.training_feature_path, id, str(month_index), self.S1_bands, self.S2_bands)
+            elif self.data_type == "tiff":
+                feature_tensor = retrieve_tiff(self.training_feature_path, id, str(month_index), self.S1_bands, self.S2_bands)
+            else:
+                sys.exit("Incorrect data type passed to dataloader maker")
 
-        if self.S1_bands.count(1) >= 1:
-            S1_bands = rasterio.open(S1_data_path).read().astype(np.float32)
-            S1_bands = [x for x, y in zip(S1_bands, self.S1_bands) if y == 1]
-            bands.extend(S1_bands)
+            tensor_list.append(feature_tensor)
 
-        if self.S2_bands.count(1) >= 1:
-            S2_bands = rasterio.open(S2_data_path).read().astype(np.float32)
-            S2_bands = [x for x, y in zip(S2_bands, self.S2_bands) if y == 1]
-            bands.extend(S2_bands)
-
-        feature_tensor = create_tensor_from_bands_list(bands)
-
-        if self.transform:
-            feature_tensor = self.transform(feature_tensor)
-
-        return feature_tensor, label_tensor
+        return tensor_list, label_tensor
 
 
-class Segmenter(pl.LightningModule):
-    def __init__(self, model, learning_rate, loss_function):
+class ChainedSegmentationSubmissionDatasetMaker(Dataset):
+    def __init__(self, testing_feature_path, id_list, data_type, S1_bands, S2_bands, month_selection, transform=None):
+        self.testing_feature_path = testing_feature_path
+        self.id_list = id_list
+        self.data_type = data_type
+        self.S1_bands = S1_bands
+        self.S2_bands = S2_bands
+        self.transform = transform
+        self.month_selection = month_selection
+
+    def __len__(self):
+        return len(self.id_list)
+
+    def __getitem__(self, idx):
+
+        id = self.id_list[idx]
+
+        tensor_list = []
+
+        for month_index, month_indicator in enumerate(self.month_selection):
+
+            if self.data_type == "npy":
+                feature_tensor = retrieve_npy(self.testing_feature_path, id, str(month_index), self.S1_bands, self.S2_bands)
+            elif self.data_type == "tiff":
+                feature_tensor = retrieve_tiff(self.testing_feature_path, id, str(month_index), self.S1_bands, self.S2_bands)
+            else:
+                sys.exit("Incorrect data type passed to dataloader maker")
+
+            tensor_list.append(feature_tensor)
+
+        return tensor_list
+
+
+def retrieve_npy(training_feature_path, id, month, S1_band_selection, S2_band_selection):
+
+    id_month_path = osp.join(training_feature_path, id, month)
+
+    if S2_band_selection.count(1) >= 1:
+        if osp.exists(osp.join(id_month_path, "S2") is False):
+            return None
+
+    bands = []
+
+    for band_index, S1_indicator in enumerate(S1_band_selection):
+
+        if S1_indicator == 1:
+            band = np.load(osp.join(training_feature_path, id, month, "S1", f"{band_index}.npy"),
+                           allow_pickle=True)
+            bands.append(band)
+
+    for band_index, S2_indicator in enumerate(S2_band_selection):
+
+        if S2_indicator == 1:
+            band = np.load(osp.join(training_feature_path, id, month, "S2", f"{band_index}.npy"),
+                           allow_pickle=True)
+            bands.append(band)
+
+    feature_tensor = create_tensor_from_bands_list(bands)
+
+    return feature_tensor
+
+
+def retrieve_tiff(training_feature_path, id, month, S1_band_selection, S2_band_selection):
+
+    if int(month) < 10:
+        month = "0" + month
+
+    S1_path = osp.join(training_feature_path, f"{id}_S1_{month}.tif")
+    S2_path = osp.join(training_feature_path, f"{id}_S2_{month}.tif")
+
+    if S2_band_selection.count(1) >= 1:
+        if osp.exists(osp.join(S2_path) is False):
+            return None
+
+    bands = []
+
+    if S1_band_selection.count(1) >= 1:
+        S1_bands = rasterio.open(S1_path).read().astype(np.float32)
+        S1_bands = [x for x, y in zip(S1_bands, S1_band_selection) if y == 1]
+        bands.extend(S1_bands)
+
+    if S2_band_selection.count(1) >= 1:
+        S2_bands = rasterio.open(S2_path).read().astype(np.float32)
+        S2_bands = [x for x, y in zip(S2_bands, S2_band_selection) if y == 1]
+        bands.extend(S2_bands)
+
+    feature_tensor = create_tensor_from_bands_list(bands)
+
+    return feature_tensor
+
+
+class ChainedSegmenter(pl.LightningModule):
+    def __init__(self, band_model, month_model, learning_rate, loss_function, repair_mode):
         super().__init__()
-        self.model = model
+        self.band_model = band_model
+        self.month_model = month_model
         self.learning_rate = learning_rate
         self.loss_function = loss_function
+        self.repair_mode = repair_mode
 
     def training_step(self, batch, batch_idx):
         x, y = batch
-        y_hat = self.model(x)
+
+        segmented_bands_list = []
+
+        for current_band in x:
+
+            if current_band is None:
+                result = torch.tensor(np.zeros((256, 256)))
+            else:
+                result = self.band_model(current_band)
+
+            result = result[None, :]
+
+            segmented_bands_list.append(result)
+
+        month_tensor = torch.cat(segmented_bands_list, 0)
+
+        y_hat = self.month_model(month_tensor)
         loss = self.loss_function(y_hat, y)
         self.log("train/loss", loss)
+
         return loss
 
     def validation_step(self, batch, batch_idx):
         x, y = batch
-        y_hat = self.model(x)
+
+        segmented_bands_list = []
+
+        for current_band in x:
+
+            if current_band is None:
+                result = torch.tensor(np.zeros((256, 256)))
+            else:
+                result = self.band_model(current_band)
+
+            result = result[None, :]
+
+            segmented_bands_list.append(result)
+
+        month_tensor = torch.cat(segmented_bands_list, 0)
+
+        y_hat = self.month_model(month_tensor)
         loss = self.loss_function(y_hat, y)
         self.log("val/loss", loss)
+
         return loss
 
     def configure_optimizers(self):
@@ -139,43 +227,38 @@ class Segmenter(pl.LightningModule):
         return self.model(x)
 
 
-def prepare_dataset_converted(training_ids_path, training_features_path, S1_band_selection, S2_band_selection):
-
-    with open(training_ids_path, newline='') as f:
+def prepare_dataset_training(args):
+    with open(args.training_ids_path, newline='') as f:
         reader = csv.reader(f)
         patch_name_data = list(reader)
     chip_ids = patch_name_data[0]
 
-    id_month_list = []
-    for id in chip_ids:
-        for month in range(0, 12):
+    if args.data_type == "npy":
+        training_features_path = args.converted_training_features_path
+    elif args.data_type == "tiff":
+        training_features_path = args.tiff_training_features_path
+    else:
+        sys.exit("Incorrect data type passed to dataloader maker")
 
-            month_patch_path = osp.join(training_features_path, id, str(month))
-            if osp.exists(osp.join(month_patch_path, "S2")):
-                id_month_list.append((id, str(month)))
-
-    new_dataset = SegmentationDatasetMaker(training_features_path, id_month_list, S1_band_selection,
-                                           S2_band_selection)
-    return new_dataset, (S1_band_selection.count(1) + S2_band_selection.count(1))
+    new_dataset = ChainedSegmentationDatasetMaker(training_features_path, args.tiff_training_labels_path, chip_ids, args.S1_band_selection, args.S2_band_selection)
+    return new_dataset, (args.S1_band_selection.count(1) + args.S2_band_selection.count(1))
 
 
-def prepare_dataset_tiff(training_ids_path, training_features_path, training_labels_path, S1_band_selection, S2_band_selection):
-    with open(training_ids_path, newline='') as f:
+def prepare_dataset_testing(args):
+    with open(args.testing_ids_path, newline='') as f:
         reader = csv.reader(f)
         patch_name_data = list(reader)
     chip_ids = patch_name_data[0]
 
-    id_month_list = []
-    for id in chip_ids:
-        for month in range(0, 12):
+    if args.data_type == "npy":
+        testing_features_path = args.converted_training_features_path
+    elif args.data_type == "tiff":
+        testing_features_path = args.tiff_training_features_path
+    else:
+        sys.exit("Incorrect data type passed to dataloader maker")
 
-            month_patch_path = osp.join(training_features_path, f"{id}_S2_{month:02}.tif")
-            if osp.exists(month_patch_path):
-                id_month_list.append((id, str(month)))
-
-    new_dataset = SegmentationDatasetMakerTIFF(training_features_path, training_labels_path, id_month_list, S1_band_selection,
-                                               S2_band_selection)
-    return new_dataset, (S1_band_selection.count(1) + S2_band_selection.count(1))
+    new_dataset = ChainedSegmentationSubmissionDatasetMaker(testing_features_path, args.tiff_training_labels_path, chip_ids, args.S1_band_selection, args.S2_band_selection)
+    return new_dataset
 
 
 def select_segmenter(args):
@@ -213,19 +296,7 @@ def train(args):
 
     print("Getting train data...")
 
-    if args.data_type == "npy":
-        train_dataset, number_of_channels = prepare_dataset_converted(args.training_ids_path,
-                                                                      args.converted_training_features_path,
-                                                                      args.S1_band_selection,
-                                                                      args.S2_band_selection)
-    elif args.data_type == "tiff":
-        train_dataset, number_of_channels = prepare_dataset_tiff(args.training_ids_path,
-                                                                 args.tiff_training_features_path,
-                                                                 args.tiff_training_labels_path,
-                                                                 args.S1_band_selection,
-                                                                 args.S2_band_selection)
-    else:
-        sys.exit("Invalid data type selected during training.")
+    train_dataset, number_of_channels = prepare_dataset_training(args)
 
     train_size = int(1 - args.validation_fraction * len(train_dataset))
     valid_size = len(train_dataset) - train_size
@@ -247,7 +318,7 @@ def train(args):
     if pre_trained_weights_path is not None:
         base_model.encoder.load_state_dict(torch.load(pre_trained_weights_path))
 
-    model = Segmenter(model=base_model, learning_rate=args.learning_rate, loss_function=args.loss_function)
+    model = ChainedSegmenter(model=base_model, learning_rate=args.learning_rate, loss_function=args.loss_function)
 
     logger = TensorBoardLogger("tb_logs", name=args.model_identifier)
 
@@ -306,7 +377,7 @@ def load_model(args):
 
     ###########################################################
 
-    model = Segmenter(model=base_model, learning_rate=args.learning_rate, loss_function=args.loss_function)
+    model = ChainedSegmenter(model=base_model, learning_rate=args.learning_rate, loss_function=args.loss_function)
 
     checkpoint = torch.load(str(latest_checkpoint_path))
     model.load_state_dict(checkpoint["state_dict"])
@@ -321,6 +392,7 @@ def create_submissions(args):
         create_submissions_tiff(args)
     else:
         sys.exit("Invalid data type selected during submission creation.")
+
 
 def create_submissions_converted(args):
 
@@ -455,6 +527,52 @@ def create_submissions_tiff(args):
             print(f"{index} / {total}")
 
 
+# Source: https://stackoverflow.com/a/2249060/14633351
+def accumulate_predictions(l):
+    it = itertools.groupby(l, operator.itemgetter(0))
+    for key, subiter in it:
+        group_list = list(subiter)
+        total = sum(tensors for tensor_id, tensors in group_list)
+        yield key, total / len(group_list)
+
+
+def experimental_submission(args):
+
+    model = load_model(args)
+
+    id_month_list = []
+
+    new_dataset = prepare_dataset_testing(args)
+
+    trainer = Trainer(accelerator="gpu", devices=1)
+
+    dl = DataLoader(new_dataset, num_workers=6)
+
+    predictions = trainer.predict(model, dataloaders=dl)
+
+    transformed_predictions = [x.cpu().squeeze().detach().numpy() for x in predictions]
+
+    tensor_id_list = [i[0] for i in id_month_list]
+
+    linked_tensor_list = list(zip(tensor_id_list, transformed_predictions))
+
+    linked_tensor_list = sorted(linked_tensor_list, key=operator.itemgetter(0))
+
+    averaged_tensor_list = list(accumulate_predictions(linked_tensor_list))
+
+    for id_tensor_pair in averaged_tensor_list:
+
+        current_id = id_tensor_pair[0]
+        current_tensor = id_tensor_pair[1]
+
+        agbm_path = osp.join(args.submission_folder_path, f"{current_id}_agbm.tif")
+
+        im = Image.fromarray(current_tensor)
+        im.save(agbm_path)
+
+    print("Finished creating submission.")
+
+
 def set_args():
 
     model_segmenter = "Unet"
@@ -552,6 +670,8 @@ def set_args():
 
 if __name__ == '__main__':
     args = set_args()
-    #train(args)
-    create_submissions(args)
+    train(args)
+    #create_submissions(args)
+
+    experimental_submission(args)
 

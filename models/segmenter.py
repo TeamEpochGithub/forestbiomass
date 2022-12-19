@@ -47,21 +47,21 @@ class SegmentationDatasetMakerConverted(Dataset):
         label = np.load(label_path, allow_pickle=True)
         label_tensor = torch.tensor(np.asarray([label], dtype=np.float32))
 
-        arr_list = []
+        bands = []
 
         for index, s1_index in enumerate(self.s1_bands):
 
             if s1_index == 1:
                 band = np.load(osp.join(self.training_feature_path, id, month, "S1", f"{index}.npy"), allow_pickle=True)
-                arr_list.append(band)
+                bands.append(band)
 
         for index, s2_index in enumerate(self.s2_bands):
 
             if s2_index == 1:
                 band = np.load(osp.join(self.training_feature_path, id, month, "S2", f"{index}.npy"), allow_pickle=True)
-                arr_list.append(band)
+                bands.append(band)
 
-        data_tensor = create_tensor_from_bands_list(arr_list)
+        data_tensor = create_tensor_from_bands_list(bands)
 
         if self.transform:
             data_tensor = self.transform(data_tensor)
@@ -129,21 +129,21 @@ class SubmissionDatasetMakerConverted(Dataset):
 
         id, month = self.id_month_list[idx]
 
-        arr_list = []
+        bands = []
 
         for index, s1_index in enumerate(self.s1_bands):
 
             if s1_index == 1:
                 band = np.load(osp.join(self.training_data_path, id, month, "S1", f"{index}.npy"), allow_pickle=True)
-                arr_list.append(band)
+                bands.append(band)
 
         for index, s2_index in enumerate(self.s2_bands):
 
             if s2_index == 1:
                 band = np.load(osp.join(self.training_data_path, id, month, "S2", f"{index}.npy"), allow_pickle=True)
-                arr_list.append(band)
+                bands.append(band)
 
-        data_tensor = create_tensor_from_bands_list(arr_list)
+        data_tensor = create_tensor_from_bands_list(bands)
 
         if self.transform:
             data_tensor = self.transform(data_tensor)
@@ -621,7 +621,7 @@ def set_args():
     model_segmenter = "Unet"
     model_encoder = "efficientnet-b2"
     model_encoder_weights = "imagenet"  # Leave None if not using weights.
-    data_type = "npy"  # options are "npy" or "tiff"
+    data_type = "tiff"  # options are "npy" or "tiff"
     epochs = 3
     learning_rate = 1e-4
     dataloader_workers = 6
@@ -713,7 +713,7 @@ def set_args():
 
 if __name__ == '__main__':
     args = set_args()
-    #train(args)
+    train(args)
     #create_submissions(args)
 
     experimental_submission(args)
