@@ -5,7 +5,7 @@ import os.path as osp
 import numpy as np
 
 import data
-from osgeo import gdal, ogr  # https://opensourceoptions.com/blog/how-to-install-gdal-for-python-with-pip-on-windows/
+from osgeo import gdal  # https://opensourceoptions.com/blog/how-to-install-gdal-for-python-with-pip-on-windows/
 import data.imgs as img_data
 
 gdal.PushErrorHandler('CPLQuietErrorHandler')
@@ -224,4 +224,4 @@ def save_all_testing_patches():
 
 
 if __name__ == '__main__':
-    save_all_testing_patches()
+    save_all_patches()
