@@ -14,24 +14,22 @@ module load py-pip
 python -m pip install --upgrade --user numpy
 
 
-#unset CONDA_SHLVL
-#source "$(conda info --base)/etc/profile.d/conda.sh"
+unset CONDA_SHLVL
+source "$(conda info --base)/etc/profile.d/conda.sh"
 
 ### Comment out next lines after first run
-#conda info --environments
-#conda create -n mypython
+conda info --environments
+#conda create -n forestbiomassconda
 ###
 
-#conda activate mypython
+conda activate forestbiomassconda
 
 ### Comment out next few lines after first run
-#conda install -c conda-forge gym
-#conda install -c conda-forge stable-baselines3
-#conda install -c conda-forge pip
-#conda install -c conda-forge git
-#pip install git+https://github.com/intelligent-environments-lab/CityLearn.git@v1.3.6
+#conda install -c conda-forge gdal
+conda install -c conda-forge pip
+pip install --global-option=build_ext --global-option="-I/usr/include/gdal" GDAL==`gdal-config --version`
 #conda list
 ###
 
-python ../utils/data_generator/get_train_data.py
-#conda deactivate
+python ../../utils/data_generator/get_train_data.py
+conda deactivate

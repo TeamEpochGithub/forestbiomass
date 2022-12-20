@@ -28,6 +28,5 @@ def evaluate_corrupted_transforms():
                                     epochs=2)
 
 
-
 if __name__ == '__main__':
     evaluate_corrupted_transforms()

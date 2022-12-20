@@ -1,10 +1,6 @@
 import torch
 from PIL import Image
-import numpy
-from matplotlib import pyplot as plt
 from torch.utils.data import Dataset, DataLoader
-import torch.nn.functional as F
-from torch import distributed as dist
 import segmentation_models_pytorch as smp
 import os
 import rasterio
@@ -18,7 +14,6 @@ from pytorch_lightning.callbacks import ModelCheckpoint
 import models
 import data
 import csv
-import argparse
 from models.utils import loss_functions
 from pytorch_lightning.strategies import DDPStrategy
 import argparse
@@ -148,13 +143,13 @@ def add_band_corrupted_arrays(tensor_bands):
     return tensor_bands
 
 
-def select_segmenter(segmenter_name, encoder_name, number_of_channels):
+def select_segmenter(encoder_weights, segmenter_name, encoder_name, number_of_channels):
     if segmenter_name == "Unet":
         base_model = smp.Unet(
             encoder_name=encoder_name,
             in_channels=number_of_channels,
             classes=1,
-            encoder_weights=args.encoder_weights
+            encoder_weights=encoder_weights
         )
     else:
         base_model = None
@@ -197,7 +192,7 @@ def train(args):
     valid_dataloader = DataLoader(val_set, batch_size=args.batch_size, shuffle=False,
                                   num_workers=args.dataloader_workers)
 
-    base_model = select_segmenter(args.segmenter_name, args.encoder_name, number_of_channels)
+    base_model = select_segmenter(args.encoder_weights, args.segmenter_name, args.encoder_name, number_of_channels)
 
     pre_trained_weights_dir_path = osp.join(osp.dirname(data.__file__), "pre-trained_weights")
 
@@ -219,17 +214,17 @@ def train(args):
         mode="min",
     )
 
+    # ddp = DDPStrategy(process_group_backend="gloo")
     trainer = Trainer(
-        # accelerator="gpu",
-        devices=1,
         max_epochs=args.epochs,
         logger=[logger],
         log_every_n_steps=args.log_step_frequency,
         callbacks=[checkpoint_callback],
         num_sanity_val_steps=0,
-        gpus=8,
+        accelerator='gpu',
+        devices=1,
         # num_nodes=4,
-        strategy="ddp"
+        # strategy=ddp
     )
 
     trainer.fit(model, train_dataloaders=train_dataloader, val_dataloaders=valid_dataloader)
@@ -249,7 +244,7 @@ def load_model(args):
     latest_checkpoint_name = list(os.scandir(checkpoint_dir_path))[-1]
     latest_checkpoint_path = osp.join(checkpoint_dir_path, latest_checkpoint_name)
 
-    base_model = select_segmenter(args.segmenter_name, args.encoder_name,
+    base_model = select_segmenter(args.encoder_weights, args.segmenter_name, args.encoder_name,
                                   (args.S1_band_selection.count(1) + args.S2_band_selection.count(1))
                                   + args.extra_channels)
 
