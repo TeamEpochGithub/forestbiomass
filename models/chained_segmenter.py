@@ -146,7 +146,7 @@ def retrieve_tiff(training_feature_path, id, month, S1_band_selection, S2_band_s
     S2_path = osp.join(training_feature_path, f"{id}_S2_{month}.tif")
 
     if S2_band_selection.count(1) >= 1:
-        if osp.exists(osp.join(S2_path) is False):
+        if osp.exists(S2_path) is False:
             return None
 
     bands = []
