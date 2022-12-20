@@ -1,7 +1,6 @@
 from osgeo import gdal
 import numpy as np
 import tensorflow as tf
-import matplotlib.pyplot as plt
 import os
 import os.path as osp
 import csv
@@ -12,6 +11,8 @@ from PIL import Image
 class CNNModel(tf.keras.Model):
     def __init__(self, base, weights):
         super(CNNModel, self).__init__()
+        # self.inlayer = tf.keras.Input(shape=(256, 256, 11))
+        self.preprocessing = tf.keras.layers.Normalization()
         self.base = base
         base_weights = weights
 
@@ -24,6 +25,7 @@ class CNNModel(tf.keras.Model):
         self.out = tf.keras.layers.Dense(256 * 256, activation='linear')
 
     def call(self, x, training=None, **kwargs):
+        x = self.preprocessing(x)
         x = self.base(x)
         x = self.pool(x)
         x = self.dens3(x)
@@ -34,21 +36,20 @@ class CNNModel(tf.keras.Model):
 def create_model(base_model, base_weights):
     model = CNNModel(base_model, base_weights)
     model.build(input_shape=(None, 256, 256, 11))
-    model.compile(optimizer="adam", loss=tf.keras.losses.MeanSquaredError(),
-                  metrics=[tf.keras.metrics.RootMeanSquaredError()])
 
     return model
 
 
-def get_patch_names(patch_file):
-    with open(osp.join(osp.dirname(data.__file__), patch_file), newline='') as f:
+def get_patch_names(file_name):
+
+    with open(osp.join(osp.dirname(data.__file__), file_name), newline='') as f:
         reader = csv.reader(f)
         patch_name_data = list(reader)
 
     return patch_name_data[0]
 
 class DataGeneratorTif(tf.keras.utils.Sequence):
-    def __init__(self, patch_ids, batch_size=4):
+    def __init__(self, patch_ids, batch_size=32):
         """
         Few things to mention:
             - This data generator uses original tif files, now only s2 and averages them for every patch
@@ -169,7 +170,8 @@ class DataGeneratorNpy(tf.keras.utils.Sequence):
 
 # Datagenerator kicks patch out if there is corrupted bands within.
 class DataGeneratorNpyClean(tf.keras.utils.Sequence):
-    def __init__(self, patch_ids, batch_size=4):
+    def __init__(self, patch_ids, batch_size=32):
+
         """
         Few things to mention:
             - The data generator tells our model how to fetch one batch of training data (in this case from files)
@@ -177,7 +179,7 @@ class DataGeneratorNpyClean(tf.keras.utils.Sequence):
             - Therefore, we want all filenames and labels to be determined before training
             - This saves work, because we will be fetching batches multiple times (across epochs)
         """
-        self.dir_path = r'C:\Users\kuipe\OneDrive\Bureaublad\Epoch\forestbiomass\data\test/'
+        self.dir_path = r'C:\Users\kuipe\Desktop\Epoch\forestbiomass\data\converted/'
         # Get all filenames in directory
         self.patches = patch_ids
         # Include batch size as attribute
@@ -253,7 +255,7 @@ class DataGeneratorNpyNoise(tf.keras.utils.Sequence):
             - Therefore, we want all filenames and labels to be determined before training
             - This saves work, because we will be fetching batches multiple times (across epochs)
         """
-        self.dir_path = r'C:\Users\kuipe\Desktop\Epoch\forestbiomass\data\test/'
+        self.dir_path = r'C:\Users\kuipe\Desktop\Epoch\forestbiomass\data\converted/'
         # Get all filenames in directory
         self.patches = patch_ids
         # Include batch size as attribute
@@ -292,12 +294,14 @@ class DataGeneratorNpyNoise(tf.keras.utils.Sequence):
                 try:
                     bands = [osp.join(self.dir_path + p + f'/{month}/S2/', file) for file in os.listdir(self.dir_path + p + f'/{month}/S2')]
                     for band in bands:
+
                         load = np.load(band)
                         if is_corrupted(load):
                             s2_month.append(np.random.standard_normal(size=(256, 256)))
                         else:
                             s2_month.append(load)
 
+                    # s2_month = tf.image.per_image_standardization(np.asarray(s2_month))
                     s2_patch.append(s2_month)
                 except:
                     continue
@@ -305,22 +309,22 @@ class DataGeneratorNpyNoise(tf.keras.utils.Sequence):
             # average all the bands per patch together.
             average = np.average(s2_patch, axis=0)
             # Reshape it so that the CNN model can take the data in. 11 is the number of channels.
+            # average = tf.image.per_image_standardization(average).numpy()
             average = average.reshape(256, 256, 11)
             batch_x.append(average)
 
         return np.asarray(batch_x), np.asarray(batch_y)
 
 def create_submissions():
-    submission_path = r'C:\Users\kuipe\OneDrive\Bureaublad\Epoch\forestbiomass\data\test_agbm'
+    submission_path = r'C:\Users\kuipe\Desktop\Epoch\forestbiomass\data\test_agbm'
 
     # Get patches of test data
-    test_patches = get_patch_names('patch_name_test')
-    predict_datagen = DataGeneratorNpy(test_patches, mode="test")
+    test_patches = get_patch_names('test_patch_names')
+    predict_datagen = DataGeneratorNpy(mode="test")
     # Load weights in of the best checkpoint
     model.load_weights(checkpoint_filepath)
-    predictions = model.predict(predict_datagen)
+    predictions = model.predict(predict_datagen, workers=20)
     # Save tif files to directory to make a prediction
-    print(predictions[0])
     for i in range(len(test_patches)):
         test_agbm_path = osp.join(submission_path, f'{test_patches[i]}_agbm.tif')
         pred = predictions[i].reshape(256, 256)
@@ -328,19 +332,22 @@ def create_submissions():
         im.save(test_agbm_path)
 
 if __name__ == '__main__':
+    # mirrored_strategy = tf.distribute.MirroredStrategy()
+
     # Change this to some pretrained cnn of keras
     # Check this link for different models: https://www.tensorflow.org/api_docs/python/tf/keras/applications
+    # strategy = tf.distribute.MultiWorkerMirroredStrategy()
+    # with strategy.scope():
     base_model = tf.keras.applications.resnet50.ResNet50(include_top=False, weights=None, input_shape=(256, 256, 11))
     base_weights = tf.keras.applications.resnet50.ResNet50(include_top=False, weights='imagenet', input_shape=(256, 256, 3))
     # Create model
     model = create_model(base_model, base_weights)
+
     # Get patch names to feed in data generator.
-    patch_names = get_patch_names('patch_name_test')
-    datagen = DataGeneratorNpyClean(patch_names)
-    x, y = datagen[0]
-    print(x.shape)
+    patch_names = get_patch_names('patch_names')
+    datagen = DataGeneratorNpyNoise(patch_names)
+
     # # Save checkpoints
-    # checkpoint_filepath = './tmp/checkpoint_temp/{epoch:02d}.hdf5'
     checkpoint_filepath = './tmp/checkpoint.hdf5'
     model_checkpoint_callback = tf.keras.callbacks.ModelCheckpoint(
         filepath=checkpoint_filepath,
@@ -350,15 +357,9 @@ if __name__ == '__main__':
         save_best_only=True
     )
 
-    # Use data generator to fit on model
-    model.fit(datagen,
-              epochs=5,
-              verbose=1,
-              callbacks=[model_checkpoint_callback],
-              # max_queue_size=20,
-              # workers=20,
-              # use_multiprocessing=True
-    )
-    create_submissions()
-
+    # # Use data generator to fit on model
+    model.compile(optimizer="adam", loss=tf.keras.losses.MeanSquaredError(),
+                  metrics=[tf.keras.metrics.RootMeanSquaredError()])
+    model.fit(datagen, epochs=125, verbose=1, callbacks=[model_checkpoint_callback], max_queue_size=25, workers=50, use_multiprocessing=False)
+    # create_submissions()
 

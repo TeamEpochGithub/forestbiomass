@@ -120,6 +120,31 @@ def extract_and_save_patch_names():
         wr.writerow(all_patch_names)
 
 
+def extract_and_save_testing_patch_names():
+    """
+    Get all patch names from testing data and then save them
+    """
+
+    # The absolute data path for pc #2
+    test_data_path = r"\\DESKTOP-P8NCSTN\Epoch\forestbiomass\data\imgs\test_features"
+
+    directory = os.fsencode(test_data_path)
+
+    current_patchname = "XXXXXXXX"
+    all_patch_names = []
+
+    for file in os.listdir(directory):
+        filename = os.fsdecode(file)
+
+        if not filename.startswith(current_patchname):
+            current_patchname = filename[:8]
+            all_patch_names.append(current_patchname)
+
+    with open(osp.join(osp.dirname(data.__file__), 'test_patch_names'), 'w', newline='') as myfile:
+        wr = csv.writer(myfile, quoting=csv.QUOTE_ALL)
+        wr.writerow(all_patch_names)
+
+
 def save_all_patches():
     """
     Save all patches, converted to .npy, in a new file structure
@@ -137,7 +162,7 @@ def save_all_patches():
 
         label_path = osp.join(train_label_path, patch + "_agbm.tif")
         label_data = get_data_from_path(label_path)
-        save_label_path = osp.join("converted", patch)
+        save_label_path = osp.join("forest-biomass", patch)
 
         save_ndarray(save_label_path, "label", label_data)
 
@@ -152,10 +177,51 @@ def save_all_patches():
 
             if data_s1 is not None:
                 for band, d in enumerate(data_s1):
-                    save_s1_path = osp.join("converted", patch, str(month), "S1")
+                    save_s1_path = osp.join("forest-biomass", patch, str(month), "S1")
                     save_ndarray(save_s1_path, str(band), d)
 
             if data_s2 is not None:
                 for band, d in enumerate(data_s2):
-                    save_s2_path = osp.join("converted", patch, str(month), "S2")
+                    save_s2_path = osp.join("forest-biomass", patch, str(month), "S2")
                     save_ndarray(save_s2_path, str(band), d)
+
+
+def save_all_testing_patches():
+    """
+    Save all testing patches, converted to .npy, in a new file structure
+    """
+    with open(osp.join(osp.dirname(data.__file__), 'test_patch_names'), newline='') as f:
+        reader = csv.reader(f)
+        patch_name_data = list(reader)
+    patch_names = patch_name_data[0]
+
+    test_data_path = osp.join(osp.dirname(img_data.__file__), "test_features")
+    test_data_converted_path = osp.join(osp.dirname(data.__file__), "forest-biomass-test")
+
+    total = len(patch_names)
+
+    for index, patch in enumerate(patch_names):
+
+        if index % 100 == 0:
+            print(f"{index} / {total}")
+
+        for month in range(0, 12):
+            s1_path = osp.join(test_data_path, patch + "_S1_" + f"{month:02}.tif")
+            s2_path = osp.join(test_data_path, patch + "_S2_" + f"{month:02}.tif")
+
+            data_s1 = get_data_from_path(s1_path)
+            data_s2 = get_data_from_path(s2_path)
+
+            if data_s1 is not None:
+                for band, d in enumerate(data_s1):
+                    save_s1_path = osp.join(test_data_converted_path, patch, str(month), "S1")
+                    save_ndarray(save_s1_path, str(band), d)
+
+            if data_s2 is not None:
+                for band, d in enumerate(data_s2):
+                    save_s2_path = osp.join(test_data_converted_path, patch, str(month), "S2")
+                    save_ndarray(save_s2_path, str(band), d)
+
+
+if __name__ == '__main__':
+    save_all_testing_patches()
