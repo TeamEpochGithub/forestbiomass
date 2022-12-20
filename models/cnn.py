@@ -243,7 +243,72 @@ class DataGeneratorNpyClean(tf.keras.utils.Sequence):
             index+=1
 
         return np.asarray(batch_x), np.asarray(batch_y)
-# def create_data_generator(mode):
+
+class DataGeneratorNpyNoise(tf.keras.utils.Sequence):
+    def __init__(self, patch_ids, batch_size=1):
+        """
+        Few things to mention:
+            - The data generator tells our model how to fetch one batch of training data (in this case from files)
+            - Any work that can be done before training, should be done in init, since we want fetching a batch to be fast
+            - Therefore, we want all filenames and labels to be determined before training
+            - This saves work, because we will be fetching batches multiple times (across epochs)
+        """
+        self.dir_path = r'C:\Users\kuipe\Desktop\Epoch\forestbiomass\data\test/'
+        # Get all filenames in directory
+        self.patches = patch_ids
+        # Include batch size as attribute
+        self.batch_size = batch_size
+
+    def __len__(self):
+        """
+        Should return the number of BATCHES the generator can retrieve (partial batch at end counts as well)
+        """
+        return int(np.ceil(len(self.patches) / float(self.batch_size)))
+
+    def __getitem__(self, idx):
+        """
+        Tells generator how to retrieve BATCH idx
+        """
+
+        # Get filenames for X batch
+        batch_patches = self.patches[idx * self.batch_size:(idx + 1) * self.batch_size]
+        batch_labels = [self.dir_path + p + '/label.npy' for p in batch_patches]
+
+        batch_x = []
+        batch_y = []
+        # Get labels per patch.
+        for label_npy in batch_labels:
+            label = np.load(label_npy).reshape(256 * 256)
+            batch_y.append(label)
+
+        # Get all possible s2 bands that are available per patch
+        for p in batch_patches:
+
+            s2_patch = []
+            for month in range(12):
+                s2_month = []
+
+                # Check if S2 data exists for a specific month
+                try:
+                    bands = [osp.join(self.dir_path + p + f'/{month}/S2/', file) for file in os.listdir(self.dir_path + p + f'/{month}/S2')]
+                    for band in bands:
+                        load = np.load(band)
+                        if is_corrupted(load):
+                            s2_month.append(np.random.standard_normal(size=(256, 256)))
+                        else:
+                            s2_month.append(load)
+
+                    s2_patch.append(s2_month)
+                except:
+                    continue
+
+            # average all the bands per patch together.
+            average = np.average(s2_patch, axis=0)
+            # Reshape it so that the CNN model can take the data in. 11 is the number of channels.
+            average = average.reshape(256, 256, 11)
+            batch_x.append(average)
+
+        return np.asarray(batch_x), np.asarray(batch_y)
 
 def create_submissions():
     submission_path = r'C:\Users\kuipe\OneDrive\Bureaublad\Epoch\forestbiomass\data\test_agbm'
