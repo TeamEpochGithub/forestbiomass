@@ -267,5 +267,5 @@ if __name__ == '__main__':
     # # Use data generator to fit on model
     model.compile(optimizer="adam", loss=tf.keras.losses.MeanSquaredError(),
                   metrics=[tf.keras.metrics.RootMeanSquaredError()])
-    model.fit(datagen, epochs=1, verbose=1, callbacks=[model_checkpoint_callback], max_queue_size=25, workers=50, use_multiprocessing=False)
+    model.fit(datagen, epochs=125, verbose=1, callbacks=[model_checkpoint_callback], max_queue_size=25, workers=50, use_multiprocessing=False)
     # create_submissions()
