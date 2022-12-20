@@ -1,5 +1,8 @@
+import numpy as np
 import torch
 import torch.nn as nn
+
+from models.utils.check_corrupted import is_corrupted
 
 _EPSILON = 1e-10
 
@@ -49,11 +52,7 @@ class DropBands(nn.Module):
             slice_dim = 1
         else:
             slice_dim = 0
-        inputs['image'] = X.index_select(slice_dim,
-                                         torch.tensor(self.bands_to_keep,
-                                                      device=self.device
-                                                      )
-                                         )
+        inputs['image'] = X.index_select(slice_dim, torch.tensor(self.bands_to_keep, device=self.device))
         return inputs
 
 
@@ -128,3 +127,78 @@ class AppendRatioAB(nn.Module):
         ratio = ratio.unsqueeze(self.dim)
         sample['image'] = torch.cat([X, ratio], dim=self.dim)
         return sample
+
+
+def select_transform_method(picked_transform_method, in_channels):
+    if picked_transform_method == "replace_corrupted_0s":
+        # return replace_corrupted_0s, 0
+        return ReplaceCorruptedZeros(), 0
+    elif picked_transform_method == "replace_corrupted_noise":
+        return ReplaceCorruptedNoise(), 0
+    elif picked_transform_method == "add_band_corrupted_arrays":
+        # return add_band_corrupted_arrays, in_channels
+        return AppendZeros(), in_channels
+    else:
+        # return no_transformation, 0
+        return NoTransformation(), 0
+
+
+class NoTransformation(nn.Module):
+    """No transformation"""
+
+    def __init__(self) -> None:
+        super().__init__()
+
+    def forward(self, X):
+        return X
+
+
+class ReplaceCorruptedZeros(nn.Module):
+    """Replace corrupted bands by zeros"""
+
+    def __init__(self) -> None:
+        super().__init__()
+
+    def forward(self, inputs):
+        X = inputs['image'].detach()
+
+        for ind, band in enumerate(X):
+            if is_corrupted(np.array(band)):
+                X[ind] = torch.zeros((256, 256))
+        inputs['image'] = X
+        return inputs
+
+
+class ReplaceCorruptedNoise(nn.Module):
+    """Replace corrupted bands by noise"""
+
+    def __init__(self) -> None:
+        super().__init__()
+
+    def forward(self, inputs):
+        X = inputs['image'].detach()
+
+        for ind, band in enumerate(X):
+            if is_corrupted(np.array(band)):
+                X[ind] = torch.rand((256, 256))
+        inputs['image'] = X
+        return inputs
+
+
+class AppendZeros(nn.Module):
+    """Append tensors of 0s or 1s depending on corruption"""
+
+    def __init__(self) -> None:
+        super().__init__()
+
+    def forward(self, inputs):
+        X = inputs['image'].detach()
+
+        for ind, band in enumerate(X):
+            if is_corrupted(np.array(band)):
+                X = torch.cat((X, torch.zeros((1, 256, 256))), 0)
+            else:
+                X = torch.cat((X, torch.ones((1, 256, 256))), 0)
+        inputs['image'] = X
+        return inputs
+

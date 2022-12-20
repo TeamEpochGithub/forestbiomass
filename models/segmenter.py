@@ -15,88 +15,11 @@ import models
 import data
 import csv
 from models.utils import loss_functions
-from pytorch_lightning.strategies import DDPStrategy
 import argparse
-from torchgeo.transforms import indices
 import models.utils.transforms as tf
-
-from models.utils.check_corrupted import is_corrupted
+from models.utils.dataloading import SentinelDataLoader, create_tensor
 
 warnings.filterwarnings("ignore", category=rasterio.errors.NotGeoreferencedWarning)
-
-
-class SegmentationDatasetMaker(Dataset):
-    def __init__(self, training_data_path, id_month_list, s1_bands, s2_bands, transformed_bands, transform=None):
-        self.training_data_path = training_data_path
-        self.id_month_list = id_month_list
-        self.s1_bands = s1_bands
-        self.s2_bands = s2_bands
-        self.transformed_bands = transformed_bands
-        self.transform = transform
-
-    def __len__(self):
-        return len(self.id_month_list)
-
-    def __getitem__(self, idx):
-
-        id, month = self.id_month_list[idx]
-
-        label_path = osp.join(self.training_data_path, id, "label.npy")
-        label = np.load(label_path, allow_pickle=True)
-        label_tensor = torch.tensor(np.asarray([label], dtype=np.float32))
-
-        selected_list = []
-        all_list = []
-
-        for index, s1_index in enumerate(self.s1_bands):
-            band = np.load(osp.join(self.training_data_path, id, month, "S1", f"{index}.npy"), allow_pickle=True)
-            all_list.append(band)
-            if s1_index == 1:
-                selected_list.append(band)
-
-        for index, s2_index in enumerate(self.s2_bands):
-            band = np.load(osp.join(self.training_data_path, id, month, "S2", f"{index}.npy"), allow_pickle=True)
-            all_list.append(band)
-            if s2_index == 1:
-                selected_list.append(band)
-
-        selected_tensor = create_tensor(selected_list)
-
-        if self.transform:
-            selected_tensor = self.transform(selected_tensor)
-
-        all_tensor = create_tensor(all_list)
-        for index, t_index in enumerate(self.transformed_bands):
-            if t_index == 1:
-                all_tensor = append_transformations(all_tensor, index)
-
-        # TODO: append transformations in all tensor to selected tensor
-        return selected_tensor, label_tensor
-
-
-def append_transformations(s2_all_tensor, index):
-    if index == 0:
-        transformation = indices.AppendNDVI(index_nir=10, index_red=6)
-    elif index == 1:
-        transformation = indices.AppendNormalizedDifferenceIndex(index_a=15, index_b=16)
-    elif index == 2:
-        transformation = indices.AppendNDBI(index_swir=12, index_nir=10)
-    elif index == 3:
-        transformation = indices.AppendNDRE(index_nir=10, index_vre1=7)
-    elif index == 4:
-        transformation = indices.AppendNDSI(index_green=5, index_swir=12)
-    elif index == 5:
-        transformation = indices.AppendNDWI(index_green=5, index_nir=10)
-    elif index == 6:
-        transformation = indices.AppendSWI(index_vre1=7, index_swir2=12)
-    elif index == 7:
-        transformation = tf.AppendRatioAB(index_a=0, index_b=1)
-    else:
-        transformation = tf.AppendRatioAB(index_a=2, index_b=3)
-
-    s2_all_tensor = transformation(s2_all_tensor)
-
-    return s2_all_tensor
 
 
 class Sentinel2Model(pl.LightningModule):
@@ -127,9 +50,8 @@ class Sentinel2Model(pl.LightningModule):
         return self.model(x)
 
 
-def prepare_dataset(training_ids_path, training_features_path, S1_band_selection, S2_band_selection,
-                    transform_band_selection, transform_method):
-    with open(training_ids_path, newline='\n') as f:
+def prepare_dataset(args):
+    with open(args.training_ids_path, newline='\n') as f:
         reader = csv.reader(f)
         patch_name_data = list(reader)
     chip_ids = patch_name_data[0]
@@ -137,46 +59,16 @@ def prepare_dataset(training_ids_path, training_features_path, S1_band_selection
     id_month_list = []
     for id in chip_ids:
         for month in range(0, 12):
-
-            month_patch_path = osp.join(training_features_path, id, str(month))
+            month_patch_path = osp.join(args.training_features_path, id, str(month))
             if osp.exists(osp.join(month_patch_path, "S2")):
                 id_month_list.append((id, str(month)))
 
-    in_channels = S1_band_selection.count(1) + S2_band_selection.count(1) + transform_band_selection.count(1)
-    transform_method, transform_channels = select_transform_method(transform_method, in_channels=in_channels)
+    in_channels = len(args.bands_to_keep)
+    corrupted_transform_method, transform_channels = tf.select_transform_method(args.transform_method,
+                                                                                in_channels=in_channels)
 
-    new_dataset = SegmentationDatasetMaker(training_features_path, id_month_list, S1_band_selection,
-                                           S2_band_selection, transform_band_selection, transform_method)
-    return new_dataset, (in_channels + transform_channels)
-
-
-def select_transform_method(picked_transform_method, in_channels):
-    if picked_transform_method == "replace_corrupted_0s":
-        return replace_corrupted_0s, 0
-    elif picked_transform_method == "add_band_corrupted_arrays":
-        return add_band_corrupted_arrays, in_channels
-    else:
-        return no_transformation, 0
-
-
-def no_transformation(tensor_bands):
-    return tensor_bands
-
-
-def replace_corrupted_0s(tensor_bands):
-    for ind, band in enumerate(tensor_bands):
-        if is_corrupted(np.array(band)):
-            tensor_bands[ind] = torch.zeros((256, 256))
-    return tensor_bands
-
-
-def add_band_corrupted_arrays(tensor_bands):
-    for ind, band in enumerate(tensor_bands):
-        if is_corrupted(np.array(band)):
-            tensor_bands = torch.cat((tensor_bands, torch.zeros((1, 256, 256))), 0)
-        else:
-            tensor_bands = torch.cat((tensor_bands, torch.ones((1, 256, 256))), 0)
-    return tensor_bands
+    dataset = SentinelDataLoader(args, id_month_list, corrupted_transform_method)
+    return dataset, (in_channels + transform_channels)
 
 
 def select_segmenter(encoder_weights, segmenter_name, encoder_name, number_of_channels):
@@ -194,18 +86,6 @@ def select_segmenter(encoder_weights, segmenter_name, encoder_name, number_of_ch
     return base_model
 
 
-def create_tensor(band_list):
-    band_array = np.asarray(band_list, dtype=np.float32)
-
-    band_tensor = torch.tensor(band_array)
-
-    # normalization happens here
-    band_tensor = (band_tensor.permute(1, 2, 0) - band_tensor.mean(dim=(1, 2))) / (band_tensor.std(dim=(1, 2)) + 0.01)
-    band_tensor = band_tensor.permute(2, 0, 1)
-
-    return band_tensor
-
-
 def train(args):
     print('=' * 30)
     for arg in vars(args):
@@ -214,10 +94,7 @@ def train(args):
 
     print("Getting train data...")
 
-    train_dataset, number_of_channels = prepare_dataset(args.training_ids_path, args.training_features_path,
-                                                        args.S1_band_selection, args.S2_band_selection,
-                                                        args.transformed_band_selection,
-                                                        args.transform_method)
+    train_dataset, number_of_channels = prepare_dataset(args)
 
     train_size = int(1 - args.validation_fraction * len(train_dataset))
     valid_size = len(train_dataset) - train_size
@@ -396,7 +273,6 @@ def create_submissions(args):
             continue
 
         agbm_arr = np.asarray(sum(all_months) / count)
-
         test_agbm_path = osp.join(args.submission_folder_path, f"{id}_agbm.tif")
 
         im = Image.fromarray(agbm_arr)
@@ -421,58 +297,51 @@ def set_args():
     log_step_frequency = 200
     version = -1  # Keep -1 if loading the latest model version.
     save_top_k_checkpoints = 3
-    transform_method = "add_band_corrupted_arrays"  # nothing
+    transform_method = "replace_corrupted_noise"  # nothing
     loss_function = loss_functions.rmse_loss
 
     # WARNING: Only increment extra_channels when making predictions/submission (based on the transform method used)
     # it is automatically incremented during training based on the transform method used (extra channels generated)
     extra_channels = 0
 
-    sentinel_1_bands = {
-        "VV ascending": 1,
-        "VH ascending": 1,
-        "VV descending": 1,
-        "VH descending": 1
+    band_map = {
+        # S2 bands
+        0: 'S2-B2: Blue-10m',
+        1: 'S2-B3: Green-10m',
+        2: 'S2-B4: Red-10m',
+        3: 'S2-B5: VegRed-704nm-20m',
+        4: 'S2-B6: VegRed-740nm-20m',
+        5: 'S2-B7: VegRed-780nm-20m',
+        6: 'S2-B8: NIR-833nm-10m',
+        7: 'S2-B8A: NarrowNIR-864nm-20m',
+        8: 'S2-B11: SWIR-1610nm-20m',
+        9: 'S2-B12: SWIR-2200nm-20m',
+        10: 'S2-CLP: CloudProb-160m',
+        # S1 bands
+        11: 'S1-VV-Asc: Cband-10m',
+        12: 'S1-VH-Asc: Cband-10m',
+        13: 'S1-VV-Desc: Cband-10m',
+        14: 'S1-VH-Desc: Cband-10m',
+        # Bands derived by transforms
+        15: 'S2-NDVI: (NIR-Red)/(NIR+Red) 10m',
+        16: 'S1-NDVVVH-Asc: Norm Diff VV & VH, 10m',
+        17: 'S2-NDBI: Difference Built-up Index, 20m',
+        18: 'S2-NDRE: Red Edge Vegetation Index, 20m',
+        19: 'S2-NDSI: Snow Index, 20m',
+        20: 'S2-NDWI: Water Index, 10m',
+        21: 'S2-SWI: Sandardized Water-Level Index, 20m',
+        22: 'S1-VV/VH-Asc: Cband-10m',
+        23: 'S2-VV/VH-Desc: Cband-10m'
     }
 
-    sentinel_2_bands = {
-        "B2-Blue": 1,
-        "B3-Green": 1,
-        "B4-Red": 1,
-        "B5-Veg red edge 1": 1,
-        "B6-Veg red edge 2": 1,
-        "B7-Veg red edge 3": 1,
-        "B8-NIR": 1,
-        "B8A-Narrow NIR": 1,
-        "B11-SWIR 1": 1,
-        "B12-SWIR 2": 1,
-        "Cloud probability": 0
-    }
-
-    # Bands derived by transforms
-    transform_bands = {
-        "S2-NDVI": 1,  # (NIR-Red)/(NIR+Red) 10m',
-        "S1-NDVVVH-Asc": 1,  # Norm Diff VV & VH, 10m',
-        "S2-NDBI": 1,  # Difference Built-up Index, 20m',
-        "S2-NDRE": 1,  # Red Edge Vegetation Index, 20m',
-        "S2-NDSI": 1,  # Snow Index, 20m',
-        "S2-NDWI": 1,  # Water Index, 10m',
-        "S2-SWI": 1,  # Sandardized Water-Level Index, 20m',
-        "S1-VV/VH-Asc": 1,  # Cband-10m',
-        "S2-VV/VH-Desc": 1  # Cband-10m'
-    }
-
-    s1_list = list(sentinel_1_bands.values())
-    s2_list = list(sentinel_2_bands.values())
-    transformed_bands_list = list(transform_bands.values())
-
-    s1_bands_indicator = "S1-" + ''.join(str(x) for x in s1_list)
-    s2_bands_indicator = "S2-" + ''.join(str(x) for x in s2_list)
-    transformed_bands_indicator = "TB-" + ''.join(str(x) for x in transformed_bands_list)
+    bands_to_keep = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 15, 16, 17, 18, 19, 20, 21]
+    band_indicator = ["1" if k in bands_to_keep else "0" for k, v in band_map.items()]
 
     parser = argparse.ArgumentParser()
+    bands_to_keep_indicator = "bands-" + ''.join(str(x) for x in band_indicator)
+    model_identifier = f"{model_segmenter}_{model_encoder}_{bands_to_keep_indicator}"
 
-    model_identifier = f"{model_segmenter}_{model_encoder}_{s1_bands_indicator}_{s2_bands_indicator}_{transformed_bands_indicator}"
+    print(model_identifier)
     parser.add_argument('--model_identifier', default=model_identifier, type=str)
     parser.add_argument('--segmenter_name', default=model_segmenter, type=str)
     parser.add_argument('--encoder_name', default=model_encoder, type=str)
@@ -497,9 +366,7 @@ def set_args():
     parser.add_argument('--log_step_frequency', default=log_step_frequency, type=int)
     parser.add_argument('--save_top_k_checkpoints', default=save_top_k_checkpoints, type=int)
 
-    parser.add_argument('--S1_band_selection', default=s1_list, type=list)
-    parser.add_argument('--S2_band_selection', default=s2_list, type=list)
-    parser.add_argument('--transformed_band_selection', default=transformed_bands_list, type=list)
+    parser.add_argument('--bands_to_keep', default=bands_to_keep, type=list)
     parser.add_argument('--loss_function', default=loss_function)
     parser.add_argument('--transform_method', default=transform_method, type=str)
     parser.add_argument('--extra_channels', default=extra_channels, type=int)
@@ -512,4 +379,4 @@ def set_args():
 if __name__ == '__main__':
     args = set_args()
     _, score = train(args)
-    print(score)
+    # print(score)
