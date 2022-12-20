@@ -67,7 +67,10 @@ class ChainedSegmentationDatasetMaker(Dataset):
             else:
                 sys.exit("Incorrect data type passed to dataloader maker")
 
+            print(feature_tensor)
             tensor_list.append(feature_tensor)
+
+        print(tensor_list, label_tensor)
 
         return tensor_list, label_tensor
 
@@ -240,8 +243,15 @@ def prepare_dataset_training(args):
     else:
         sys.exit("Incorrect data type passed to dataloader maker")
 
-    new_dataset = ChainedSegmentationDatasetMaker(training_features_path, args.tiff_training_labels_path, chip_ids, args.S1_band_selection, args.S2_band_selection)
-    return new_dataset, (args.S1_band_selection.count(1) + args.S2_band_selection.count(1))
+    new_dataset = ChainedSegmentationDatasetMaker(training_features_path,
+                                                  args.tiff_training_labels_path,
+                                                  chip_ids,
+                                                  args.data_type,
+                                                  args.S1_band_selection,
+                                                  args.S2_band_selection,
+                                                  args.month_selection)
+
+    return new_dataset
 
 
 def prepare_dataset_testing(args):
@@ -257,21 +267,25 @@ def prepare_dataset_testing(args):
     else:
         sys.exit("Incorrect data type passed to dataloader maker")
 
-    new_dataset = ChainedSegmentationSubmissionDatasetMaker(testing_features_path, args.tiff_training_labels_path, chip_ids, args.S1_band_selection, args.S2_band_selection)
-    return new_dataset
+    new_dataset = ChainedSegmentationSubmissionDatasetMaker(testing_features_path,
+                                                            args.tiff_training_labels_path,
+                                                            chip_ids,
+                                                            args.data_type,
+                                                            args.S1_band_selection,
+                                                            args.S2_band_selection,
+                                                            args.month_selection)
+    return new_dataset, chip_ids
 
 
-def select_segmenter(args):
+def select_segmenter(segmenter_name, encoder_name, encoder_weights, channel_count):
 
-    channel_count = (args.S1_band_selection.count(1) + args.S2_band_selection.count(1))
-
-    if args.segmenter_name == "Unet":
+    if segmenter_name == "Unet":
 
         base_model = smp.Unet(
-            encoder_name=args.encoder_name,
+            encoder_name=encoder_name,
             in_channels=channel_count,
             classes=1,
-            encoder_weights=args.encoder_weights
+            encoder_weights=encoder_weights
         )
     else:
         base_model = None
@@ -296,7 +310,7 @@ def train(args):
 
     print("Getting train data...")
 
-    train_dataset, number_of_channels = prepare_dataset_training(args)
+    train_dataset = prepare_dataset_training(args)
 
     train_size = int(1 - args.validation_fraction * len(train_dataset))
     valid_size = len(train_dataset) - train_size
@@ -306,19 +320,24 @@ def train(args):
     train_dataloader = DataLoader(train_set, batch_size=args.batch_size, shuffle=True, num_workers=args.dataloader_workers)
     valid_dataloader = DataLoader(val_set, batch_size=args.batch_size, shuffle=False, num_workers=args.dataloader_workers)
 
-    base_model = select_segmenter(args)
+    band_channel_count = (args.S1_band_selection.count(1) + args.S2_band_selection.count(1))
+    month_channel_count = args.month_selection.count(1)
 
-    pre_trained_weights_dir_path = osp.join(osp.dirname(data.__file__), "pre-trained_weights")
+    band_segmenter_model = select_segmenter(args.band_segmenter_name,
+                                            args.band_encoder_name,
+                                            args.band_encoder_weights_name,
+                                            band_channel_count)
 
-    if osp.exists(osp.join(pre_trained_weights_dir_path, f"{args.encoder_name}.pt")):
-        pre_trained_weights_path = osp.join(pre_trained_weights_dir_path, f"{args.encoder_name}.pt")
-    else:
-        pre_trained_weights_path = None
+    month_segmenter_model = select_segmenter(args.month_segmenter_name,
+                                             args.month_encoder_name,
+                                             args.month_encoder_weights_name,
+                                             month_channel_count)
 
-    if pre_trained_weights_path is not None:
-        base_model.encoder.load_state_dict(torch.load(pre_trained_weights_path))
-
-    model = ChainedSegmenter(model=base_model, learning_rate=args.learning_rate, loss_function=args.loss_function)
+    model = ChainedSegmenter(band_model=band_segmenter_model,
+                             month_model=month_segmenter_model,
+                             learning_rate=args.learning_rate,
+                             loss_function=args.loss_function,
+                             repair_mode=args.missing_month_repair_mode)
 
     logger = TensorBoardLogger("tb_logs", name=args.model_identifier)
 
@@ -356,28 +375,26 @@ def load_model(args):
     latest_checkpoint_name = list(os.scandir(checkpoint_dir_path))[-1]
     latest_checkpoint_path = osp.join(checkpoint_dir_path, latest_checkpoint_name)
 
-    base_model = select_segmenter(args)
 
-    ###########################################################
+    band_channel_count = (args.S1_band_selection.count(1) + args.S2_band_selection.count(1))
+    month_channel_count = args.month_selection.count(1)
 
-    # This block might be redundant if we can download weights via the python segmentation models library.
-    # However, it might be that not all weights are available this way.
-    # If you have downloaded weights (in the .pt format), put them in the pre-trained-weights folder
-    # and give the file the same name as the encoder you're using.
-    # If you do that, this block will try and load them for your model.
-    pre_trained_weights_dir_path = osp.join(osp.dirname(data.__file__), "pre-trained_weights")
+    band_segmenter_model = select_segmenter(args.band_segmenter_name,
+                                            args.band_encoder_name,
+                                            args.band_weights_name,
+                                            band_channel_count)
 
-    if osp.exists(osp.join(pre_trained_weights_dir_path, f"{args.encoder_name}.pt")):
-        pre_trained_weights_path = osp.join(pre_trained_weights_dir_path, f"{args.encoder_name}.pt")
-    else:
-        pre_trained_weights_path = None
+    month_segmenter_model = select_segmenter(args.month_segmenter_name,
+                                             args.month_encoder_name,
+                                             args.month_weights_name,
+                                             month_channel_count)
 
-    if pre_trained_weights_path is not None:
-        base_model.encoder.load_state_dict(torch.load(pre_trained_weights_path))
+    model = ChainedSegmenter(band_model=band_segmenter_model,
+                             month_model=month_segmenter_model,
+                             learning_rate=args.learning_rate,
+                             loss_function=args.loss_function,
+                             repair_mode=args.missing_month_repair_mode)
 
-    ###########################################################
-
-    model = ChainedSegmenter(model=base_model, learning_rate=args.learning_rate, loss_function=args.loss_function)
 
     checkpoint = torch.load(str(latest_checkpoint_path))
     model.load_state_dict(checkpoint["state_dict"])
@@ -540,9 +557,7 @@ def experimental_submission(args):
 
     model = load_model(args)
 
-    id_month_list = []
-
-    new_dataset = prepare_dataset_testing(args)
+    new_dataset, chip_ids = prepare_dataset_testing(args)
 
     trainer = Trainer(accelerator="gpu", devices=1)
 
@@ -552,9 +567,7 @@ def experimental_submission(args):
 
     transformed_predictions = [x.cpu().squeeze().detach().numpy() for x in predictions]
 
-    tensor_id_list = [i[0] for i in id_month_list]
-
-    linked_tensor_list = list(zip(tensor_id_list, transformed_predictions))
+    linked_tensor_list = list(zip(chip_ids, transformed_predictions))
 
     linked_tensor_list = sorted(linked_tensor_list, key=operator.itemgetter(0))
 
@@ -575,9 +588,14 @@ def experimental_submission(args):
 
 def set_args():
 
-    model_segmenter = "Unet"
-    model_encoder = "efficientnet-b2"
-    model_encoder_weights = "imagenet"  # Leave None if not using weights.
+    band_segmenter = "Unet"
+    band_encoder = "efficientnet-b2"
+    band_encoder_weights = "imagenet"
+
+    month_segmenter = "Unet"
+    month_encoder = "efficientnet-b2"
+    month_encoder_weights = "imagenet"
+
     data_type = "tiff"  # options are "npy" or "tiff"
     epochs = 3
     learning_rate = 1e-4
@@ -587,13 +605,34 @@ def set_args():
     log_step_frequency = 10
     version = -1  # Keep -1 if loading the latest model version.
     save_top_k_checkpoints = 3
-    loss_function = loss_functions.logit_binary_cross_entropy_loss
+    loss_function = loss_functions.rmse_loss
+
+    missing_month_repair_mode = "zeros"
+
+    month_selection = {
+        "September": 1,
+        "October": 1,
+        "November": 1,
+        "December": 1,
+        "January": 1,
+        "February": 1,
+        "March": 1,
+        "April": 1,
+        "May": 1,
+        "June": 1,
+        "July": 1,
+        "August": 1
+    }
+
+    month_list = list(month_selection.values())
+
+    month_selection_indicator = "months-" + ''.join(str(x) for x in month_list)
 
     sentinel_1_bands = {
-        "VV ascending": 0,
-        "VH ascending": 0,
-        "VV descending": 0,
-        "VH descending": 0
+        "VV ascending": 1,
+        "VH ascending": 1,
+        "VV descending": 1,
+        "VH descending": 1
     }
 
     sentinel_2_bands = {
@@ -618,15 +657,31 @@ def set_args():
 
     parser = argparse.ArgumentParser()
 
-    if model_encoder_weights is not None:
-        model_identifier = f"{model_segmenter}_{model_encoder}_{model_encoder_weights}_{s1_bands_indicator}_{s2_bands_indicator}"
+    if band_encoder_weights is not None and month_encoder_weights is not None:
+        model_identifier = f"Bands_{band_segmenter}_{band_encoder}_{band_encoder_weights}_{s1_bands_indicator}_{s2_bands_indicator}" \
+                           f"Months_{month_segmenter}_{month_encoder}_{month_encoder_weights}_{month_selection_indicator}"
+
+    elif band_encoder_weights is None and month_encoder_weights is not None:
+        model_identifier = f"Bands_{band_segmenter}_{band_encoder}_{s1_bands_indicator}_{s2_bands_indicator}" \
+                           f"Months_{month_segmenter}_{month_encoder}_{month_encoder_weights}_{month_selection_indicator}"
+
+    elif band_encoder_weights is not None and month_encoder_weights is None:
+        model_identifier = f"Bands_{band_segmenter}_{band_encoder}_{s1_bands_indicator}_{s2_bands_indicator}" \
+                           f"Months_{month_segmenter}_{month_encoder}_{month_encoder_weights}_{month_selection_indicator}"
     else:
-        model_identifier = f"{model_segmenter}_{model_encoder}_{s1_bands_indicator}_{s2_bands_indicator}"
+        model_identifier = f"Bands_{band_segmenter}_{band_encoder}_{s1_bands_indicator}_{s2_bands_indicator}" \
+                           f"Months_{month_segmenter}_{month_encoder}_{month_selection_indicator}"
 
     parser.add_argument('--model_identifier', default=model_identifier, type=str)
-    parser.add_argument('--segmenter_name', default=model_segmenter, type=str)
-    parser.add_argument('--encoder_name', default=model_encoder, type=str)
-    parser.add_argument('--encoder_weights', default=model_encoder_weights, type=str)
+
+    parser.add_argument('--band_segmenter_name', default=band_segmenter, type=str)
+    parser.add_argument('--band_encoder_name', default=band_encoder, type=str)
+    parser.add_argument('--band_encoder_weights_name', default=band_encoder_weights, type=str)
+
+    parser.add_argument('--month_segmenter_name', default=month_segmenter, type=str)
+    parser.add_argument('--month_encoder_name', default=month_encoder, type=str)
+    parser.add_argument('--month_encoder_weights_name', default=month_encoder_weights, type=str)
+
     parser.add_argument('--model_version', default=version, type=int)
     parser.add_argument('--data_type', default=data_type, type=str)
 
@@ -657,7 +712,10 @@ def set_args():
 
     parser.add_argument('--S1_band_selection', default=s1_list, type=list)
     parser.add_argument('--S2_band_selection', default=s2_list, type=list)
+    parser.add_argument('--month_selection', default=month_list, type=list)
     parser.add_argument('--loss_function', default=loss_function)
+
+    parser.add_argument('--missing_month_repair_mode', default=missing_month_repair_mode, type=str)
 
     args = parser.parse_args()
 
