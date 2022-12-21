@@ -67,10 +67,7 @@ class ChainedSegmentationDatasetMaker(Dataset):
             else:
                 sys.exit("Incorrect data type passed to dataloader maker")
 
-            print(feature_tensor)
             tensor_list.append(feature_tensor)
-
-        print(tensor_list, label_tensor)
 
         return tensor_list, label_tensor
 
@@ -113,8 +110,8 @@ def retrieve_npy(training_feature_path, id, month, S1_band_selection, S2_band_se
     id_month_path = osp.join(training_feature_path, id, month)
 
     if S2_band_selection.count(1) >= 1:
-        if osp.exists(osp.join(id_month_path, "S2") is False):
-            return None
+        if not osp.exists(osp.join(id_month_path, "S2")):
+            return np.zeros((14, 256, 256), dtype=np.float32)
 
     bands = []
 
@@ -146,8 +143,8 @@ def retrieve_tiff(training_feature_path, id, month, S1_band_selection, S2_band_s
     S2_path = osp.join(training_feature_path, f"{id}_S2_{month}.tif")
 
     if S2_band_selection.count(1) >= 1:
-        if osp.exists(S2_path) is False:
-            return None
+        if not osp.exists(S2_path):
+            return np.zeros((14, 256, 256), dtype=np.float32)
 
     bands = []
 
@@ -182,16 +179,14 @@ class ChainedSegmenter(pl.LightningModule):
 
         for current_band in x:
 
-            if current_band is None:
+            if len(current_band) == 0:
                 result = torch.tensor(np.zeros((256, 256)))
             else:
                 result = self.band_model(current_band)
 
-            result = result[None, :]
-
             segmented_bands_list.append(result)
 
-        month_tensor = torch.cat(segmented_bands_list, 0)
+        month_tensor = torch.cat(segmented_bands_list, 0).permute(1, 0, 2, 3)
 
         y_hat = self.month_model(month_tensor)
         loss = self.loss_function(y_hat, y)
@@ -206,16 +201,14 @@ class ChainedSegmenter(pl.LightningModule):
 
         for current_band in x:
 
-            if current_band is None:
+            if len(current_band) == 0:
                 result = torch.tensor(np.zeros((256, 256)))
             else:
                 result = self.band_model(current_band)
 
-            result = result[None, :]
-
             segmented_bands_list.append(result)
 
-        month_tensor = torch.cat(segmented_bands_list, 0)
+        month_tensor = torch.cat(segmented_bands_list, 0).permute(1, 0, 2, 3)
 
         y_hat = self.month_model(month_tensor)
         loss = self.loss_function(y_hat, y)
@@ -596,12 +589,12 @@ def set_args():
     month_encoder = "efficientnet-b2"
     month_encoder_weights = "imagenet"
 
-    data_type = "tiff"  # options are "npy" or "tiff"
-    epochs = 3
+    data_type = "npy"  # options are "npy" or "tiff"
+    epochs = 20
     learning_rate = 1e-4
-    dataloader_workers = 6
+    dataloader_workers = 12
     validation_fraction = 0.2
-    batch_size = 2
+    batch_size = 1
     log_step_frequency = 10
     version = -1  # Keep -1 if loading the latest model version.
     save_top_k_checkpoints = 3
@@ -659,18 +652,18 @@ def set_args():
 
     if band_encoder_weights is not None and month_encoder_weights is not None:
         model_identifier = f"Bands_{band_segmenter}_{band_encoder}_{band_encoder_weights}_{s1_bands_indicator}_{s2_bands_indicator}" \
-                           f"Months_{month_segmenter}_{month_encoder}_{month_encoder_weights}_{month_selection_indicator}"
+                           f"_Months_{month_segmenter}_{month_encoder}_{month_encoder_weights}_{month_selection_indicator}"
 
     elif band_encoder_weights is None and month_encoder_weights is not None:
         model_identifier = f"Bands_{band_segmenter}_{band_encoder}_{s1_bands_indicator}_{s2_bands_indicator}" \
-                           f"Months_{month_segmenter}_{month_encoder}_{month_encoder_weights}_{month_selection_indicator}"
+                           f"_Months_{month_segmenter}_{month_encoder}_{month_encoder_weights}_{month_selection_indicator}"
 
     elif band_encoder_weights is not None and month_encoder_weights is None:
         model_identifier = f"Bands_{band_segmenter}_{band_encoder}_{s1_bands_indicator}_{s2_bands_indicator}" \
-                           f"Months_{month_segmenter}_{month_encoder}_{month_encoder_weights}_{month_selection_indicator}"
+                           f"_Months_{month_segmenter}_{month_encoder}_{month_encoder_weights}_{month_selection_indicator}"
     else:
         model_identifier = f"Bands_{band_segmenter}_{band_encoder}_{s1_bands_indicator}_{s2_bands_indicator}" \
-                           f"Months_{month_segmenter}_{month_encoder}_{month_selection_indicator}"
+                           f"_Months_{month_segmenter}_{month_encoder}_{month_selection_indicator}"
 
     parser.add_argument('--model_identifier', default=model_identifier, type=str)
 
@@ -686,6 +679,7 @@ def set_args():
     parser.add_argument('--data_type', default=data_type, type=str)
 
     data_path = osp.dirname(data.__file__)
+    data_path = r"C:\Users\kuipe\Desktop\Epoch\forestbiomass\data"
     models_path = osp.dirname(models.__file__)
 
     # Note: Converted data does not have an explicit label path, as labels are stored within training_features
