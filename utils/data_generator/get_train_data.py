@@ -224,4 +224,4 @@ def save_all_testing_patches():
 
 
 if __name__ == '__main__':
-    save_all_testing_patches()
+    save_all_patches()
