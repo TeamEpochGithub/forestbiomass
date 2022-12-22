@@ -196,7 +196,7 @@ def save_all_testing_patches():
     patch_names = patch_name_data[0]
 
     test_data_path = osp.join(osp.dirname(img_data.__file__), "test_features")
-    test_data_converted_path = osp.join(osp.dirname(data.__file__), "forest-biomass-test")
+    test_data_converted_path = osp.join(osp.dirname(data.__file__), "testing_converted")
 
     total = len(patch_names)
 
