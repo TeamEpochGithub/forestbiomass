@@ -49,6 +49,8 @@ class SegmentationDatasetMakerConverted(Dataset):
 
         bands = []
 
+
+
         for index, s1_index in enumerate(self.s1_bands):
 
             if s1_index == 1:
@@ -308,7 +310,7 @@ def train(args):
     else:
         sys.exit("Invalid data type selected during training.")
 
-    train_size = int(1 - args.validation_fraction * len(train_dataset))
+    train_size = int((1 - args.validation_fraction) * len(train_dataset))
     valid_size = len(train_dataset) - train_size
 
     train_set, val_set = torch.utils.data.random_split(train_dataset, [train_size, valid_size])
@@ -621,22 +623,41 @@ def set_args():
     model_segmenter = "Unet"
     model_encoder = "efficientnet-b2"
     model_encoder_weights = "imagenet"  # Leave None if not using weights.
-    data_type = "tiff"  # options are "npy" or "tiff"
-    epochs = 3
+    data_type = "npy"  # options are "npy" or "tiff"
+    epochs = 20
     learning_rate = 1e-4
-    dataloader_workers = 6
+    dataloader_workers = 12
     validation_fraction = 0.2
-    batch_size = 2
+    batch_size = 64
     log_step_frequency = 10
     version = -1  # Keep -1 if loading the latest model version.
     save_top_k_checkpoints = 3
-    loss_function = loss_functions.logit_binary_cross_entropy_loss
+    loss_function = loss_functions.rmse_loss
+
+    month_selection = {
+        "September": 1,
+        "October": 1,
+        "November": 1,
+        "December": 1,
+        "January": 1,
+        "February": 1,
+        "March": 1,
+        "April": 1,
+        "May": 1,
+        "June": 1,
+        "July": 1,
+        "August": 1
+    }
+
+    month_list = list(month_selection.values())
+
+    month_selection_indicator = "months-" + ''.join(str(x) for x in month_list)
 
     sentinel_1_bands = {
-        "VV ascending": 0,
-        "VH ascending": 0,
-        "VV descending": 0,
-        "VH descending": 0
+        "VV ascending": 1,
+        "VH ascending": 1,
+        "VV descending": 1,
+        "VH descending": 1
     }
 
     sentinel_2_bands = {
@@ -674,6 +695,7 @@ def set_args():
     parser.add_argument('--data_type', default=data_type, type=str)
 
     data_path = osp.dirname(data.__file__)
+    data_path = r"C:\Users\kuipe\Desktop\Epoch\forestbiomass\data"
     models_path = osp.dirname(models.__file__)
 
     # Note: Converted data does not have an explicit label path, as labels are stored within training_features
@@ -700,6 +722,7 @@ def set_args():
 
     parser.add_argument('--S1_band_selection', default=s1_list, type=list)
     parser.add_argument('--S2_band_selection', default=s2_list, type=list)
+    parser.add_argument('--month_selection', default=month_list, type=list)
     parser.add_argument('--loss_function', default=loss_function)
 
     args = parser.parse_args()
@@ -713,7 +736,7 @@ def set_args():
 
 if __name__ == '__main__':
     args = set_args()
-    train(args)
+    #train(args)
     #create_submissions(args)
 
     experimental_submission(args)
