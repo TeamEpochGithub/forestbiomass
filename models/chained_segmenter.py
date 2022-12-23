@@ -220,7 +220,23 @@ class ChainedSegmenter(pl.LightningModule):
         return [torch.optim.Adam(self.parameters(), lr=self.learning_rate)]
 
     def forward(self, x):
-        return self.model(x)
+
+        segmented_bands_list = []
+
+        for current_band in x:
+
+            if len(current_band) == 0:
+                result = torch.tensor(np.zeros((256, 256)))
+            else:
+                result = self.band_model(current_band)
+
+            segmented_bands_list.append(result)
+
+        month_tensor = torch.cat(segmented_bands_list, 0).permute(1, 0, 2, 3)
+
+        x = self.month_model(month_tensor)
+
+        return x
 
 
 def prepare_dataset_training(args):
@@ -305,7 +321,7 @@ def train(args):
 
     train_dataset = prepare_dataset_training(args)
 
-    train_size = int(1 - args.validation_fraction * len(train_dataset))
+    train_size = int((1 - args.validation_fraction) * len(train_dataset))
     valid_size = len(train_dataset) - train_size
 
     train_set, val_set = torch.utils.data.random_split(train_dataset, [train_size, valid_size])
