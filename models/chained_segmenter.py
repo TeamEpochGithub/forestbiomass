@@ -180,19 +180,24 @@ class ChainedSegmenter(pl.LightningModule):
         x, y = batch
 
         segmented_bands_list = []
-
+        print("flag 1")
         for current_band in x:
 
             if len(current_band) == 0:
                 result = torch.tensor(np.zeros((256, 256)))
             else:
                 result = self.band_model(current_band)
-
+            print("flag 2")
             segmented_bands_list.append(result)
 
-        month_tensor = torch.cat(segmented_bands_list, 0).permute(1, 0, 2, 3)
+        print(segmented_bands_list[0].size())
+        print(torch.cat(segmented_bands_list, 0).size())
 
+        month_tensor = torch.cat(segmented_bands_list, 0).permute(1, 0, 2, 3)
+        print(month_tensor.size())
+        print("flag 3")
         y_hat = self.month_model(month_tensor)
+        print("flag 4")
         loss = self.loss_function(y_hat, y)
         self.log("train/loss", loss)
 
@@ -360,12 +365,13 @@ def train(args):
     )
 
     trainer = Trainer(
-        accelerator="gpu",
+        accelerator="cpu",
         devices=1,
         max_epochs=args.epochs,
         logger=[logger],
         log_every_n_steps=args.log_step_frequency,
-        callbacks=[checkpoint_callback]
+        callbacks=[checkpoint_callback],
+        num_sanity_val_steps=0
     )
 
     trainer.fit(model, train_dataloaders=train_dataloader, val_dataloaders=valid_dataloader)
@@ -642,7 +648,7 @@ def set_args():
     learning_rate = 1e-4
     dataloader_workers = 12
     validation_fraction = 0.2
-    batch_size = 1
+    batch_size = 2
     log_step_frequency = 10
     version = -1  # Keep -1 if loading the latest model version.
     save_top_k_checkpoints = 3
@@ -727,7 +733,6 @@ def set_args():
     parser.add_argument('--data_type', default=data_type, type=str)
 
     data_path = osp.dirname(data.__file__)
-    data_path = r"C:\Users\kuipe\Desktop\Epoch\forestbiomass\data"
     models_path = osp.dirname(models.__file__)
 
     # Note: Converted data does not have an explicit label path, as labels are stored within training_features
@@ -738,7 +743,7 @@ def set_args():
     parser.add_argument('--tiff_training_labels_path', default=str(osp.join(data_path, "imgs", "train_agbm")))
     parser.add_argument('--tiff_testing_features_path', default=str(osp.join(data_path, "imgs", "test_features")))
 
-    parser.add_argument('--training_ids_path', default=str(osp.join(data_path, "patch_names")), type=str)
+    parser.add_argument('--training_ids_path', default=str(osp.join(data_path, "local_patch_names")), type=str)
     parser.add_argument('--testing_ids_path', default=str(osp.join(data_path, "test_patch_names")), type=str)
 
     parser.add_argument('--current_model_path', default=str(osp.join(models_path, "tb_logs", model_identifier)), type=str)
@@ -770,8 +775,7 @@ def set_args():
 
 if __name__ == '__main__':
     args = set_args()
-    #train(args)
+    train(args)
     #create_submissions(args)
-
-    chained_experimental_submission(args)
+    #chained_experimental_submission(args)
 
