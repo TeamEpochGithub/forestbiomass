@@ -1,15 +1,10 @@
-#Imports
 from google.api_core import page_iterator
-import tensorflow as tf
-from keras import datasets, layers, models
 import google
 from google.cloud import storage
 import numpy as np
 import sys
 import os
-import gslib
-from tensorflow.python.lib.io import file_io
-from io import StringIO, BytesIO
+from io import BytesIO
 
 np.random.seed(0)
 
