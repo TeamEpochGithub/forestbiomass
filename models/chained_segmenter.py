@@ -105,27 +105,29 @@ class ChainedSegmentationSubmissionDatasetMaker(Dataset):
         return tensor_list
 
 
-def retrieve_npy(training_feature_path, id, month, S1_band_selection, S2_band_selection):
+def retrieve_npy(feature_path, id, month, S1_band_selection, S2_band_selection):
 
-    id_month_path = osp.join(training_feature_path, id, month)
+    id_month_path = osp.join(feature_path, id, month)
+
+    channel_count = S1_band_selection.count(1) + S2_band_selection.count(1)
 
     if S2_band_selection.count(1) >= 1:
         if not osp.exists(osp.join(id_month_path, "S2")):
-            return np.zeros((14, 256, 256), dtype=np.float32)
+            return np.zeros((channel_count, 256, 256), dtype=np.float32)
 
     bands = []
 
     for band_index, S1_indicator in enumerate(S1_band_selection):
 
         if S1_indicator == 1:
-            band = np.load(osp.join(training_feature_path, id, month, "S1", f"{band_index}.npy"),
+            band = np.load(osp.join(feature_path, id, month, "S1", f"{band_index}.npy"),
                            allow_pickle=True)
             bands.append(band)
 
     for band_index, S2_indicator in enumerate(S2_band_selection):
 
         if S2_indicator == 1:
-            band = np.load(osp.join(training_feature_path, id, month, "S2", f"{band_index}.npy"),
+            band = np.load(osp.join(feature_path, id, month, "S2", f"{band_index}.npy"),
                            allow_pickle=True)
             bands.append(band)
 
@@ -134,17 +136,19 @@ def retrieve_npy(training_feature_path, id, month, S1_band_selection, S2_band_se
     return feature_tensor
 
 
-def retrieve_tiff(training_feature_path, id, month, S1_band_selection, S2_band_selection):
+def retrieve_tiff(feature_path, id, month, S1_band_selection, S2_band_selection):
 
     if int(month) < 10:
         month = "0" + month
 
-    S1_path = osp.join(training_feature_path, f"{id}_S1_{month}.tif")
-    S2_path = osp.join(training_feature_path, f"{id}_S2_{month}.tif")
+    channel_count = S1_band_selection.count(1) + S2_band_selection.count(1)
+
+    S1_path = osp.join(feature_path, f"{id}_S1_{month}.tif")
+    S2_path = osp.join(feature_path, f"{id}_S2_{month}.tif")
 
     if S2_band_selection.count(1) >= 1:
         if not osp.exists(S2_path):
-            return np.zeros((14, 256, 256), dtype=np.float32)
+            return np.zeros((channel_count, 256, 256), dtype=np.float32)
 
     bands = []
 
@@ -234,9 +238,9 @@ class ChainedSegmenter(pl.LightningModule):
 
         month_tensor = torch.cat(segmented_bands_list, 0).permute(1, 0, 2, 3)
 
-        x = self.month_model(month_tensor)
+        y_hat = self.month_model(month_tensor)
 
-        return x
+        return y_hat
 
 
 def prepare_dataset_training(args):
@@ -270,14 +274,13 @@ def prepare_dataset_testing(args):
     chip_ids = patch_name_data[0]
 
     if args.data_type == "npy":
-        testing_features_path = args.converted_training_features_path
+        testing_features_path = args.converted_testing_features_path
     elif args.data_type == "tiff":
-        testing_features_path = args.tiff_training_features_path
+        testing_features_path = args.tiff_testing_features_path
     else:
-        sys.exit("Incorrect data type passed to dataloader maker")
+        sys.exit("Incorrect data type passed to testing dataloader maker")
 
     new_dataset = ChainedSegmentationSubmissionDatasetMaker(testing_features_path,
-                                                            args.tiff_training_labels_path,
                                                             chip_ids,
                                                             args.data_type,
                                                             args.S1_band_selection,
@@ -390,12 +393,12 @@ def load_model(args):
 
     band_segmenter_model = select_segmenter(args.band_segmenter_name,
                                             args.band_encoder_name,
-                                            args.band_weights_name,
+                                            args.band_encoder_weights_name,
                                             band_channel_count)
 
     month_segmenter_model = select_segmenter(args.month_segmenter_name,
                                              args.month_encoder_name,
-                                             args.month_weights_name,
+                                             args.month_encoder_weights_name,
                                              month_channel_count)
 
     model = ChainedSegmenter(band_model=band_segmenter_model,
@@ -570,7 +573,7 @@ def experimental_submission(args):
 
     trainer = Trainer(accelerator="gpu", devices=1)
 
-    dl = DataLoader(new_dataset, num_workers=6)
+    dl = DataLoader(new_dataset, num_workers=12)
 
     predictions = trainer.predict(model, dataloaders=dl)
 
@@ -583,6 +586,35 @@ def experimental_submission(args):
     averaged_tensor_list = list(accumulate_predictions(linked_tensor_list))
 
     for id_tensor_pair in averaged_tensor_list:
+
+        current_id = id_tensor_pair[0]
+        current_tensor = id_tensor_pair[1]
+
+        agbm_path = osp.join(args.submission_folder_path, f"{current_id}_agbm.tif")
+
+        im = Image.fromarray(current_tensor)
+        im.save(agbm_path)
+
+    print("Finished creating submission.")
+
+
+def chained_experimental_submission(args):
+
+    model = load_model(args)
+
+    new_dataset, chip_ids = prepare_dataset_testing(args)
+
+    trainer = Trainer(accelerator="gpu", devices=1)
+
+    dl = DataLoader(new_dataset, num_workers=12)
+
+    predictions = trainer.predict(model, dataloaders=dl)
+
+    transformed_predictions = [x.cpu().squeeze().detach().numpy() for x in predictions]
+
+    linked_tensor_list = list(zip(chip_ids, transformed_predictions))
+
+    for id_tensor_pair in linked_tensor_list:
 
         current_id = id_tensor_pair[0]
         current_tensor = id_tensor_pair[1]
@@ -738,8 +770,8 @@ def set_args():
 
 if __name__ == '__main__':
     args = set_args()
-    train(args)
+    #train(args)
     #create_submissions(args)
 
-    experimental_submission(args)
+    chained_experimental_submission(args)
 
