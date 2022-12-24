@@ -30,23 +30,24 @@ warnings.filterwarnings("ignore", category=rasterio.errors.NotGeoreferencedWarni
 
 
 class Sentinel2Model(pl.LightningModule):
-    def __init__(self, model, learning_rate, loss_function):
+    def __init__(self, model, args):
         super().__init__()
         self.model = model
-        self.learning_rate = learning_rate
-        self.loss_function = loss_function
+        self.learning_rate = args.learning_rate
+        self.train_loss_function = args.train_loss_function
+        self.val_loss_function = args.val_loss_function
 
     def training_step(self, batch, batch_idx):
         x, y = batch
         y_hat = self.model(x)
-        loss = self.loss_function(y_hat, y)
+        loss = self.train_loss_function(y_hat, y)
         self.log("train/loss", loss)
         return loss
 
     def validation_step(self, batch, batch_idx):
         x, y = batch
         y_hat = self.model(x)
-        loss = self.loss_function(y_hat, y)
+        loss = self.val_loss_function(y_hat, y)
         self.log("val/loss", loss)
         return loss
 
@@ -66,7 +67,7 @@ def prepare_dataset(args):
     id_month_list = []
     for id in chip_ids:
         for month in range(0, 12):
-            month_patch_path = osp.join(args.training_features_path, id, str(month))
+            month_patch_path = osp.join(args.converted_training_features_path, id, str(month))
             if osp.exists(osp.join(month_patch_path, "S2")):
                 id_month_list.append((id, str(month)))
 
@@ -125,7 +126,7 @@ def train(args):
     if pre_trained_weights_path is not None:
         base_model.encoder.load_state_dict(torch.load(pre_trained_weights_path))
 
-    model = Sentinel2Model(model=base_model, learning_rate=args.learning_rate, loss_function=args.loss_function)
+    model = Sentinel2Model(base_model, args)
 
     logger = TensorBoardLogger("tb_logs", name=args.model_identifier)
 
@@ -135,7 +136,7 @@ def train(args):
         mode="min",
     )
 
-    ddp = DDPStrategy(process_group_backend="gloo")
+    # ddp = DDPStrategy(process_group_backend="gloo")
     trainer = Trainer(
         max_epochs=args.epochs,
         logger=[logger],
@@ -143,9 +144,9 @@ def train(args):
         callbacks=[checkpoint_callback],
         num_sanity_val_steps=0,
         accelerator='gpu',
-        devices=2,
+        devices=[1],
         # num_nodes=4,
-        strategy=ddp
+        # strategy=ddp
     )
 
     trainer.fit(model, train_dataloaders=train_dataloader, val_dataloaders=valid_dataloader)
@@ -185,7 +186,7 @@ def load_model(args):
 
     ###########################################################
 
-    model = Sentinel2Model(model=base_model, learning_rate=args.learning_rate, loss_function=args.loss_function)
+    model = Sentinel2Model(base_model, args)
 
     checkpoint = torch.load(str(latest_checkpoint_path))
     model.load_state_dict(checkpoint["state_dict"])
@@ -369,7 +370,8 @@ def set_args():
     version = 5  # Keep -1 if loading the latest model version.
     save_top_k_checkpoints = 3
     transform_method = "replace_corrupted_0s"  # "replace_corrupted_noise"  # nothing  # add_band_corrupted_arrays
-    loss_function = loss_functions.rmse_loss
+    train_loss_function = loss_functions.rmse_loss
+    val_loss_function = loss_functions.rmse_loss
 
     # WARNING: Only increment extra_channels when making predictions/submission (based on the transform method used)
     # it is automatically incremented during training based on the transform method used (extra channels generated)
@@ -439,7 +441,8 @@ def set_args():
     parser.add_argument('--save_top_k_checkpoints', default=save_top_k_checkpoints, type=int)
 
     parser.add_argument('--bands_to_keep', default=bands_to_keep, type=list)
-    parser.add_argument('--loss_function', default=loss_function)
+    parser.add_argument('--train_loss_function', default=train_loss_function)
+    parser.add_argument('--val_loss_function', default=val_loss_function)
     parser.add_argument('--transform_method', default=transform_method, type=str)
     parser.add_argument('--extra_channels', default=extra_channels, type=int)
 
@@ -450,7 +453,7 @@ def set_args():
 
 if __name__ == '__main__':
     args = set_args()
-    # _, score = train(args)
+    _, score = train(args)
     # print(score)
 
     create_submissions(args)

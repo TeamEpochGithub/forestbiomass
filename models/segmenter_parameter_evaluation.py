@@ -21,7 +21,7 @@ def evaluate_segmentation_parameter(parameters, iterations=3, epochs=3):
             setattr(args, name, val)
 
         for iteration in range(iterations):
-            _, score = ("hi", 25)  # train(args)
+            _, score = train(args)
             all_scores.append(score)
 
         mean_score = np.mean(all_scores)
@@ -48,10 +48,10 @@ def evaluate_corrupted_transforms(iterations, epochs):
 
 
 def evaluate_loss_functions(iterations, epochs):
-    parameters = [{"loss_function": loss_functions.mse_loss},
-                  {"loss_function": loss_functions.rmse_loss},
-                  {"loss_function": loss_functions.logit_binary_cross_entropy_loss},
-                  {"loss_function": loss_functions.dice_loss}]
+    parameters = [{"train_loss_function": loss_functions.mse_loss},
+                  {"train_loss_function": loss_functions.rmse_loss},
+                  {"train_loss_function": loss_functions.logit_binary_cross_entropy_loss},
+                  {"train_loss_function": loss_functions.dice_loss}]
 
     evaluate_segmentation_parameter(parameters=parameters,
                                     iterations=iterations,
@@ -84,6 +84,7 @@ def evaluate_encoder_model_and_weights(iterations, epochs):
 if __name__ == '__main__':
     iterations = 3
     epochs = 20
-    evaluate_corrupted_transforms(iterations=iterations, epochs=epochs)
+
+    # evaluate_corrupted_transforms(iterations=iterations, epochs=epochs)
     evaluate_loss_functions(iterations=iterations, epochs=epochs)
-    evaluate_encoder_model_and_weights(iterations=iterations, epochs=epochs)
+    # evaluate_encoder_model_and_weights(iterations=iterations, epochs=epochs)

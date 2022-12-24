@@ -14,7 +14,7 @@ warnings.filterwarnings("ignore", category=rasterio.errors.NotGeoreferencedWarni
 
 class SentinelDataLoader(Dataset):
     def __init__(self, args, id_month_list, corrupted_transform_method):
-        self.training_data_path = args.training_features_path
+        self.training_data_path = args.converted_training_features_path
         self.bands_to_keep = args.bands_to_keep
         self.id_month_list = id_month_list
         self.corrupted_transform_method = corrupted_transform_method
