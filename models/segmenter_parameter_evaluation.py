@@ -22,8 +22,8 @@ def evaluate_segmentation_parameter(parameters, iterations=3, epochs=3):
 
         for iteration in range(iterations):
             _, score = train(args)
-            all_scores.append(score)
-
+            all_scores.append(float(score))
+        print(all_scores)
         mean_score = np.mean(all_scores)
 
         random_identifier = r.randint(10000, 99999)
@@ -59,7 +59,7 @@ def evaluate_loss_functions(iterations, epochs):
 
 
 def evaluate_encoder_model_and_weights(iterations, epochs):
-    parameters = [{"loss_function": "efficientnet-b0", "encoder_weights": None},
+    parameters = [{"encoder_name": "efficientnet-b0", "encoder_weights": None},
                   {"encoder_name": "efficientnet-b1", "encoder_weights": None},
                   {"encoder_name": "efficientnet-b2", "encoder_weights": None},
                   {"encoder_name": "efficientnet-b3", "encoder_weights": None},

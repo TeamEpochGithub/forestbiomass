@@ -63,6 +63,7 @@ def prepare_dataset(args):
         reader = csv.reader(f)
         patch_name_data = list(reader)
     chip_ids = patch_name_data[0]
+    # chip_ids = chip_ids[0:500]
 
     id_month_list = []
     for id in chip_ids:
