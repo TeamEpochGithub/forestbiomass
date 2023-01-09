@@ -12,7 +12,7 @@ import warnings
 warnings.filterwarnings("ignore", category=rasterio.errors.NotGeoreferencedWarning)
 
 
-class SentinelDataLoader(Dataset):
+class SegmentationDatasetMaker(Dataset):
     def __init__(self, args, id_month_list, corrupted_transform_method):
         self.training_data_path = args.training_features_path
         self.bands_to_keep = args.bands_to_keep
@@ -30,23 +30,64 @@ class SentinelDataLoader(Dataset):
         label = np.load(label_path, allow_pickle=True)
         label_tensor = torch.tensor(np.asarray([label], dtype=np.float32))
 
-        all_list = []
+        bands = []
 
         for index in range(11):
             band = np.load(osp.join(self.training_data_path, id, month, "S2", f"{index}.npy"), allow_pickle=True)
-            all_list.append(band)
+            bands.append(band)
 
         for index in range(4):
             band = np.load(osp.join(self.training_data_path, id, month, "S1", f"{index}.npy"), allow_pickle=True)
-            all_list.append(band)
+            bands.append(band)
 
-        all_tensor = create_tensor(all_list)
+        all_tensor = create_tensor(bands)
 
         sample = {'image': all_tensor, 'label': label_tensor}  # 'image' and 'label' are used by torchgeo
         selected_tensor = apply_transforms(bands_to_keep=self.bands_to_keep,
                                            corrupted_transform_method=self.corrupted_transform_method)(sample)
+
         return selected_tensor['image'], selected_tensor['label']
 
+class SegmentationDatasetMakerTIFF(Dataset):
+    def __init__(self, args, id_month_list, corrupted_transform_method):
+        self.training_feature_path = args.tiff_training_features_path
+        self.training_label_path = args.tiff_training_labels_path
+        self.id_month_list = id_month_list
+        self.bands_to_keep = args.bands_to_keep
+        self.id_month_list = id_month_list
+        self.corrupted_transform_method = corrupted_transform_method
+
+    def __len__(self):
+        return len(self.id_month_list)
+
+    def __getitem__(self, idx):
+
+        id, month = self.id_month_list[idx]
+
+        label_path = osp.join(self.training_label_path, f"{id}_agbm.tif")
+        label_tensor = torch.tensor(rasterio.open(label_path).read().astype(np.float32))
+
+        if int(month) < 10:
+            month = "0"+month
+
+        S1_data_path = osp.join(self.training_feature_path, f"{id}_S1_{month}.tif")
+        S2_data_path = osp.join(self.training_feature_path, f"{id}_S2_{month}.tif")
+
+        bands = []
+
+        S2_bands = rasterio.open(S2_data_path).read().astype(np.float32)
+        bands.extend(S2_bands)
+
+        S1_bands = rasterio.open(S1_data_path).read().astype(np.float32)
+        bands.extend(S1_bands)
+
+        all_tensor = create_tensor(bands)
+
+        sample = {'image': all_tensor, 'label': label_tensor}  # 'image' and 'label' are used by torchgeo
+        selected_tensor = apply_transforms(bands_to_keep=self.bands_to_keep,
+                                           corrupted_transform_method=self.corrupted_transform_method)(sample)
+
+        return selected_tensor['image'], selected_tensor['label']
 
 class SubmissionDataLoader(Dataset):
     def __init__(self, args, id_month_list, corrupted_transform_method):

@@ -27,7 +27,7 @@ import argparse
 from models.utils import loss_functions
 import argparse
 import models.utils.transforms as tf
-from models.utils.dataloading import SentinelDataLoader, create_tensor, SubmissionDataLoader, apply_transforms
+from models.utils.dataloading import SegmentationDatasetMaker, SegmentationDatasetMakerTIFF, create_tensor, SubmissionDataLoader, apply_transforms
 import operator
 import sys
 
@@ -81,7 +81,7 @@ def prepare_dataset(args):
     corrupted_transform_method, transform_channels = tf.select_transform_method(args.transform_method,
                                                                                 in_channels=in_channels)
 
-    dataset = SentinelDataLoader(args, id_month_list, corrupted_transform_method)
+    dataset = SegmentationDatasetMaker(args, id_month_list, corrupted_transform_method)
     return dataset, (in_channels + transform_channels)
 
 
@@ -153,16 +153,6 @@ def train(args):
 
     base_model = select_segmenter(args.encoder_weights, args.segmenter_name, args.encoder_name, number_of_channels)
 
-    pre_trained_weights_dir_path = osp.join(osp.dirname(data.__file__), "pre-trained_weights")
-
-    if osp.exists(osp.join(pre_trained_weights_dir_path, f"{args.encoder_name}.pt")):
-        pre_trained_weights_path = osp.join(pre_trained_weights_dir_path, f"{args.encoder_name}.pt")
-    else:
-        pre_trained_weights_path = None
-
-    if pre_trained_weights_path is not None:
-        base_model.encoder.load_state_dict(torch.load(pre_trained_weights_path))
-
     model = Segmenter(model=base_model, learning_rate=args.learning_rate, loss_function=args.loss_function)
 
     logger = TensorBoardLogger("tb_logs", name=args.model_identifier)
@@ -205,23 +195,6 @@ def load_model(args):
 
     base_model = select_segmenter(args.encoder_weights, args.segmenter_name, args.encoder_name,
                                   len(args.bands_to_keep) + args.extra_channels)
-
-    # This block might be redundant if we can download weights via the python segmentation models library.
-    # However, it might be that not all weights are available this way.
-    # If you have downloaded weights (in the .pt format), put them in the pre-trained-weights folder
-    # and give the file the same name as the encoder you're using.
-    # If you do that, this block will try and load them for your model.
-    pre_trained_weights_dir_path = osp.join(osp.dirname(data.__file__), "pre-trained_weights")
-
-    if osp.exists(osp.join(pre_trained_weights_dir_path, f"{args.encoder_name}.pt")):
-        pre_trained_weights_path = osp.join(pre_trained_weights_dir_path, f"{args.encoder_name}.pt")
-    else:
-        pre_trained_weights_path = None
-
-    if pre_trained_weights_path is not None:
-        base_model.encoder.load_state_dict(torch.load(pre_trained_weights_path))
-
-    ###########################################################
 
     model = Segmenter(model=base_model, learning_rate=args.learning_rate, loss_function=args.loss_function)
 
@@ -463,11 +436,14 @@ def set_args():
     parser.add_argument('--converted_training_features_path', default=str(osp.join(data_path, "converted")), type=str)
     parser.add_argument('--converted_testing_features_path', default=str(osp.join(data_path, "testing_converted")), type=str)
 
+    parser.add_argument('--tiff_training_features_path', default=str(osp.join(data_path, "imgs", "train_features")))
+    parser.add_argument('--tiff_training_labels_path', default=str(osp.join(data_path, "imgs", "train_agbm")))
+    parser.add_argument('--tiff_testing_features_path', default=str(osp.join(data_path, "imgs", "test_features")))
+
     parser.add_argument('--training_ids_path', default=str(osp.join(data_path, "patch_names")), type=str)
     parser.add_argument('--testing_features_path', default=str(osp.join(data_path, "testing_converted")), type=str)
     parser.add_argument('--testing_ids_path', default=str(osp.join(data_path, "test_patch_names")), type=str)
-    parser.add_argument('--current_model_path', default=str(osp.join(models_path, "tb_logs", model_identifier)),
-                        type=str)
+    parser.add_argument('--current_model_path', default=str(osp.join(models_path, "tb_logs", model_identifier)), type=str)
     parser.add_argument('--submission_folder_path', default=str(osp.join(data_path, "imgs", "test_agbm")), type=str)
 
     parser.add_argument('--dataloader_workers', default=dataloader_workers, type=int)

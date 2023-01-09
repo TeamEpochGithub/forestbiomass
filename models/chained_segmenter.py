@@ -24,12 +24,12 @@ from models.utils import loss_functions
 from pytorch_lightning.strategies import DDPStrategy
 import argparse
 
-
 warnings.filterwarnings("ignore", category=rasterio.errors.NotGeoreferencedWarning)
 
 
 class ChainedSegmentationDatasetMaker(Dataset):
-    def __init__(self, training_feature_path, training_labels_path, id_list, data_type, S1_bands, S2_bands, month_selection, transform=None):
+    def __init__(self, training_feature_path, training_labels_path, id_list, data_type, S1_bands, S2_bands,
+                 month_selection, transform=None):
         self.training_feature_path = training_feature_path
         self.training_labels_path = training_labels_path
         self.id_list = id_list
@@ -61,13 +61,17 @@ class ChainedSegmentationDatasetMaker(Dataset):
         for month_index, month_indicator in enumerate(self.month_selection):
 
             if self.data_type == "npy":
-                feature_tensor = retrieve_npy(self.training_feature_path, id, str(month_index), self.S1_bands, self.S2_bands)
+                feature_tensor = retrieve_npy(self.training_feature_path, id, str(month_index), self.S1_bands,
+                                              self.S2_bands)
             elif self.data_type == "tiff":
-                feature_tensor = retrieve_tiff(self.training_feature_path, id, str(month_index), self.S1_bands, self.S2_bands)
+                feature_tensor = retrieve_tiff(self.training_feature_path, id, str(month_index), self.S1_bands,
+                                               self.S2_bands)
             else:
                 sys.exit("Incorrect data type passed to dataloader maker")
 
             tensor_list.append(feature_tensor)
+
+        tensor_list = torch.cat(tensor_list, dim=0)
 
         return tensor_list, label_tensor
 
@@ -94,9 +98,11 @@ class ChainedSegmentationSubmissionDatasetMaker(Dataset):
         for month_index, month_indicator in enumerate(self.month_selection):
 
             if self.data_type == "npy":
-                feature_tensor = retrieve_npy(self.testing_feature_path, id, str(month_index), self.S1_bands, self.S2_bands)
+                feature_tensor = retrieve_npy(self.testing_feature_path, id, str(month_index), self.S1_bands,
+                                              self.S2_bands)
             elif self.data_type == "tiff":
-                feature_tensor = retrieve_tiff(self.testing_feature_path, id, str(month_index), self.S1_bands, self.S2_bands)
+                feature_tensor = retrieve_tiff(self.testing_feature_path, id, str(month_index), self.S1_bands,
+                                               self.S2_bands)
             else:
                 sys.exit("Incorrect data type passed to dataloader maker")
 
@@ -106,14 +112,13 @@ class ChainedSegmentationSubmissionDatasetMaker(Dataset):
 
 
 def retrieve_npy(feature_path, id, month, S1_band_selection, S2_band_selection):
-
     id_month_path = osp.join(feature_path, id, month)
 
     channel_count = S1_band_selection.count(1) + S2_band_selection.count(1)
 
     if S2_band_selection.count(1) >= 1:
         if not osp.exists(osp.join(id_month_path, "S2")):
-            return np.zeros((channel_count, 256, 256), dtype=np.float32)
+            return create_tensor_from_bands_list(np.zeros((channel_count, 256, 256), dtype=np.float32))
 
     bands = []
 
@@ -137,7 +142,6 @@ def retrieve_npy(feature_path, id, month, S1_band_selection, S2_band_selection):
 
 
 def retrieve_tiff(feature_path, id, month, S1_band_selection, S2_band_selection):
-
     if int(month) < 10:
         month = "0" + month
 
@@ -148,7 +152,7 @@ def retrieve_tiff(feature_path, id, month, S1_band_selection, S2_band_selection)
 
     if S2_band_selection.count(1) >= 1:
         if not osp.exists(S2_path):
-            return np.zeros((channel_count, 256, 256), dtype=np.float32)
+            create_tensor_from_bands_list(np.zeros((channel_count, 256, 256), dtype=np.float32))
 
     bands = []
 
@@ -180,24 +184,19 @@ class ChainedSegmenter(pl.LightningModule):
         x, y = batch
 
         segmented_bands_list = []
-        print("flag 1")
-        for current_band in x:
+        for index, current_band in enumerate(torch.tensor_split(x, 12, dim=1)):
 
-            if len(current_band) == 0:
-                result = torch.tensor(np.zeros((256, 256)))
-            else:
-                result = self.band_model(current_band)
-            print("flag 2")
+            if torch.sum(current_band) == 0:
+                batch_count = current_band.size(dim=0)
+                segmented_bands_list.append(torch.zeros(batch_count, 1, 256, 256))
+                continue
+
+            result = self.band_model(current_band)
             segmented_bands_list.append(result)
 
-        print(segmented_bands_list[0].size())
-        print(torch.cat(segmented_bands_list, 0).size())
+        month_tensor = torch.cat(segmented_bands_list, dim=1)
 
-        month_tensor = torch.cat(segmented_bands_list, 0).permute(1, 0, 2, 3)
-        print(month_tensor.size())
-        print("flag 3")
         y_hat = self.month_model(month_tensor)
-        print("flag 4")
         loss = self.loss_function(y_hat, y)
         self.log("train/loss", loss)
 
@@ -207,17 +206,17 @@ class ChainedSegmenter(pl.LightningModule):
         x, y = batch
 
         segmented_bands_list = []
+        for index, current_band in enumerate(torch.tensor_split(x, 12, dim=1)):
 
-        for current_band in x:
+            if torch.sum(current_band) == 0:
+                batch_count = current_band.size(dim=0)
+                segmented_bands_list.append(torch.zeros(batch_count, 1, 256, 256))
+                continue
 
-            if len(current_band) == 0:
-                result = torch.tensor(np.zeros((256, 256)))
-            else:
-                result = self.band_model(current_band)
-
+            result = self.band_model(current_band)
             segmented_bands_list.append(result)
 
-        month_tensor = torch.cat(segmented_bands_list, 0).permute(1, 0, 2, 3)
+        month_tensor = torch.cat(segmented_bands_list, dim=1)
 
         y_hat = self.month_model(month_tensor)
         loss = self.loss_function(y_hat, y)
@@ -231,17 +230,17 @@ class ChainedSegmenter(pl.LightningModule):
     def forward(self, x):
 
         segmented_bands_list = []
+        for index, current_band in enumerate(torch.tensor_split(x, 12, dim=1)):
 
-        for current_band in x:
+            if torch.sum(current_band) == 0:
+                batch_count = current_band.size(dim=0)
+                segmented_bands_list.append(torch.zeros(batch_count, 1, 256, 256))
+                continue
 
-            if len(current_band) == 0:
-                result = torch.tensor(np.zeros((256, 256)))
-            else:
-                result = self.band_model(current_band)
-
+            result = self.band_model(current_band)
             segmented_bands_list.append(result)
 
-        month_tensor = torch.cat(segmented_bands_list, 0).permute(1, 0, 2, 3)
+        month_tensor = torch.cat(segmented_bands_list, dim=1)
 
         y_hat = self.month_model(month_tensor)
 
@@ -295,7 +294,6 @@ def prepare_dataset_testing(args):
 
 
 def select_segmenter(segmenter_name, encoder_name, encoder_weights, channel_count):
-
     if segmenter_name == "Unet":
 
         base_model = smp.Unet(
@@ -324,7 +322,6 @@ def create_tensor_from_bands_list(band_list):
 
 
 def train(args):
-
     print("Getting train data...")
 
     train_dataset = prepare_dataset_training(args)
@@ -334,8 +331,10 @@ def train(args):
 
     train_set, val_set = torch.utils.data.random_split(train_dataset, [train_size, valid_size])
 
-    train_dataloader = DataLoader(train_set, batch_size=args.batch_size, shuffle=True, num_workers=args.dataloader_workers)
-    valid_dataloader = DataLoader(val_set, batch_size=args.batch_size, shuffle=False, num_workers=args.dataloader_workers)
+    train_dataloader = DataLoader(train_set, batch_size=args.batch_size, shuffle=True,
+                                  num_workers=args.dataloader_workers)
+    valid_dataloader = DataLoader(val_set, batch_size=args.batch_size, shuffle=False,
+                                  num_workers=args.dataloader_workers)
 
     band_channel_count = (args.S1_band_selection.count(1) + args.S2_band_selection.count(1))
     month_channel_count = args.month_selection.count(1)
@@ -365,7 +364,7 @@ def train(args):
     )
 
     trainer = Trainer(
-        accelerator="cpu",
+        accelerator="gpu",
         devices=1,
         max_epochs=args.epochs,
         logger=[logger],
@@ -380,7 +379,6 @@ def train(args):
 
 
 def load_model(args):
-
     print("Getting saved model...")
 
     assert osp.exists(args.current_model_path) is True, "requested model does not exist"
@@ -392,7 +390,6 @@ def load_model(args):
     checkpoint_dir_path = osp.join(log_folder_path, version_dir, "checkpoints")
     latest_checkpoint_name = list(os.scandir(checkpoint_dir_path))[-1]
     latest_checkpoint_path = osp.join(checkpoint_dir_path, latest_checkpoint_name)
-
 
     band_channel_count = (args.S1_band_selection.count(1) + args.S2_band_selection.count(1))
     month_channel_count = args.month_selection.count(1)
@@ -413,7 +410,6 @@ def load_model(args):
                              loss_function=args.loss_function,
                              repair_mode=args.missing_month_repair_mode)
 
-
     checkpoint = torch.load(str(latest_checkpoint_path))
     model.load_state_dict(checkpoint["state_dict"])
 
@@ -430,7 +426,6 @@ def create_submissions(args):
 
 
 def create_submissions_converted(args):
-
     model = load_model(args)
 
     test_data_path = args.testing_features_path
@@ -497,7 +492,6 @@ def create_submissions_converted(args):
 
 
 def create_submissions_tiff(args):
-
     model = load_model(args)
 
     test_data_path = args.tiff_testing_features_path
@@ -572,7 +566,6 @@ def accumulate_predictions(l):
 
 
 def experimental_submission(args):
-
     model = load_model(args)
 
     new_dataset, chip_ids = prepare_dataset_testing(args)
@@ -592,7 +585,6 @@ def experimental_submission(args):
     averaged_tensor_list = list(accumulate_predictions(linked_tensor_list))
 
     for id_tensor_pair in averaged_tensor_list:
-
         current_id = id_tensor_pair[0]
         current_tensor = id_tensor_pair[1]
 
@@ -605,7 +597,6 @@ def experimental_submission(args):
 
 
 def chained_experimental_submission(args):
-
     model = load_model(args)
 
     new_dataset, chip_ids = prepare_dataset_testing(args)
@@ -621,7 +612,6 @@ def chained_experimental_submission(args):
     linked_tensor_list = list(zip(chip_ids, transformed_predictions))
 
     for id_tensor_pair in linked_tensor_list:
-
         current_id = id_tensor_pair[0]
         current_tensor = id_tensor_pair[1]
 
@@ -634,7 +624,6 @@ def chained_experimental_submission(args):
 
 
 def set_args():
-
     band_segmenter = "Unet"
     band_encoder = "efficientnet-b2"
     band_encoder_weights = "imagenet"
@@ -648,7 +637,7 @@ def set_args():
     learning_rate = 1e-4
     dataloader_workers = 12
     validation_fraction = 0.2
-    batch_size = 2
+    batch_size = 8
     log_step_frequency = 10
     version = -1  # Keep -1 if loading the latest model version.
     save_top_k_checkpoints = 3
@@ -737,7 +726,8 @@ def set_args():
 
     # Note: Converted data does not have an explicit label path, as labels are stored within training_features
     parser.add_argument('--converted_training_features_path', default=str(osp.join(data_path, "converted")), type=str)
-    parser.add_argument('--converted_testing_features_path', default=str(osp.join(data_path, "testing_converted")), type=str)
+    parser.add_argument('--converted_testing_features_path', default=str(osp.join(data_path, "testing_converted")),
+                        type=str)
 
     parser.add_argument('--tiff_training_features_path', default=str(osp.join(data_path, "imgs", "train_features")))
     parser.add_argument('--tiff_training_labels_path', default=str(osp.join(data_path, "imgs", "train_agbm")))
@@ -746,7 +736,8 @@ def set_args():
     parser.add_argument('--training_ids_path', default=str(osp.join(data_path, "local_patch_names")), type=str)
     parser.add_argument('--testing_ids_path', default=str(osp.join(data_path, "test_patch_names")), type=str)
 
-    parser.add_argument('--current_model_path', default=str(osp.join(models_path, "tb_logs", model_identifier)), type=str)
+    parser.add_argument('--current_model_path', default=str(osp.join(models_path, "tb_logs", model_identifier)),
+                        type=str)
     parser.add_argument('--submission_folder_path', default=str(osp.join(data_path, "imgs", "test_agbm")), type=str)
 
     parser.add_argument('--dataloader_workers', default=dataloader_workers, type=int)
@@ -773,9 +764,9 @@ def set_args():
 
     return args
 
+
 if __name__ == '__main__':
     args = set_args()
     train(args)
-    #create_submissions(args)
-    #chained_experimental_submission(args)
-
+    # create_submissions(args)
+    # chained_experimental_submission(args)
