@@ -18,9 +18,16 @@ class SentinelDataLoader(Dataset):
         self.bands_to_keep = args.bands_to_keep
         self.id_month_list = id_month_list
         self.corrupted_transform_method = corrupted_transform_method
+        assert (
+            256 // self.image_size == 256 / self.image_size,
+            "Number has to be integer fraction of 256",
+        )
+        assert (self.image_size % 32 == 0, "Number has to be divisble by 32")
+        self.image_batch_size = args.image_batch_size
+        self.num_batches = 256 // self.image_batch_size
 
     def __len__(self):
-        return len(self.id_month_list)
+        return len(self.id_month_list) * self.num_batche
 
     def __getitem__(self, idx):
 

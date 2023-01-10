@@ -20,7 +20,12 @@ import csv
 from models.utils import loss_functions
 import argparse
 import models.utils.transforms as tf
-from models.utils.dataloading import SentinelDataLoader, create_tensor, SubmissionDataLoader, apply_transforms
+from models.utils.patched_dataloading import (
+    SentinelDataLoader,
+    create_tensor,
+    SubmissionDataLoader,
+    apply_transforms,
+)
 import operator
 import sys
 
@@ -59,7 +64,7 @@ class Sentinel2Model(pl.LightningModule):
 
 
 def prepare_dataset(args):
-    with open(args.training_ids_path, newline='\n') as f:
+    with open(args.training_ids_path, newline="\n") as f:
         reader = csv.reader(f)
         patch_name_data = list(reader)
     chip_ids = patch_name_data[0]
@@ -68,13 +73,16 @@ def prepare_dataset(args):
     id_month_list = []
     for id in chip_ids:
         for month in range(0, 12):
-            month_patch_path = osp.join(args.converted_training_features_path, id, str(month))
+            month_patch_path = osp.join(
+                args.converted_training_features_path, id, str(month)
+            )
             if osp.exists(osp.join(month_patch_path, "S2")):
                 id_month_list.append((id, str(month)))
 
     in_channels = len(args.bands_to_keep)
-    corrupted_transform_method, transform_channels = tf.select_transform_method(args.transform_method,
-                                                                                in_channels=in_channels)
+    corrupted_transform_method, transform_channels = tf.select_transform_method(
+        args.transform_method, in_channels=in_channels
+    )
 
     dataset = SentinelDataLoader(args, id_month_list, corrupted_transform_method)
     return dataset, (in_channels + transform_channels)
@@ -86,7 +94,7 @@ def select_segmenter(encoder_weights, segmenter_name, encoder_name, number_of_ch
             encoder_name=encoder_name,
             in_channels=number_of_channels,
             classes=1,
-            encoder_weights=encoder_weights
+            encoder_weights=encoder_weights,
         )
     else:
         base_model = None
@@ -96,10 +104,10 @@ def select_segmenter(encoder_weights, segmenter_name, encoder_name, number_of_ch
 
 
 def train(args):
-    print('=' * 30)
+    print("=" * 30)
     for arg in vars(args):
-        print('--', arg, ':', getattr(args, arg))
-    print('=' * 30)
+        print("--", arg, ":", getattr(args, arg))
+    print("=" * 30)
 
     print("Getting train data...")
 
@@ -108,19 +116,35 @@ def train(args):
     train_size = int(1 - args.validation_fraction * len(train_dataset))
     valid_size = len(train_dataset) - train_size
 
-    train_set, val_set = torch.utils.data.random_split(train_dataset, [train_size, valid_size])
+    train_set, val_set = torch.utils.data.random_split(
+        train_dataset, [train_size, valid_size]
+    )
 
-    train_dataloader = DataLoader(train_set, batch_size=args.batch_size, shuffle=True,
-                                  num_workers=args.dataloader_workers)
-    valid_dataloader = DataLoader(val_set, batch_size=args.batch_size, shuffle=False,
-                                  num_workers=args.dataloader_workers)
+    train_dataloader = DataLoader(
+        train_set,
+        batch_size=args.batch_size,
+        shuffle=True,
+        num_workers=args.dataloader_workers,
+    )
+    valid_dataloader = DataLoader(
+        val_set,
+        batch_size=args.batch_size,
+        shuffle=False,
+        num_workers=args.dataloader_workers,
+    )
 
-    base_model = select_segmenter(args.encoder_weights, args.segmenter_name, args.encoder_name, number_of_channels)
+    base_model = select_segmenter(
+        args.encoder_weights, args.segmenter_name, args.encoder_name, number_of_channels
+    )
 
-    pre_trained_weights_dir_path = osp.join(osp.dirname(data.__file__), "pre-trained_weights")
+    pre_trained_weights_dir_path = osp.join(
+        osp.dirname(data.__file__), "pre-trained_weights"
+    )
 
     if osp.exists(osp.join(pre_trained_weights_dir_path, f"{args.encoder_name}.pt")):
-        pre_trained_weights_path = osp.join(pre_trained_weights_dir_path, f"{args.encoder_name}.pt")
+        pre_trained_weights_path = osp.join(
+            pre_trained_weights_dir_path, f"{args.encoder_name}.pt"
+        )
     else:
         pre_trained_weights_path = None
 
@@ -144,15 +168,17 @@ def train(args):
         log_every_n_steps=args.log_step_frequency,
         callbacks=[checkpoint_callback],
         num_sanity_val_steps=0,
-        accelerator='gpu',
-        devices=[1],
+        accelerator="cpu",
+        # devices=[0],
         # num_nodes=4,
         # strategy=ddp
     )
 
-    trainer.fit(model, train_dataloaders=train_dataloader, val_dataloaders=valid_dataloader)
+    trainer.fit(
+        model, train_dataloaders=train_dataloader, val_dataloaders=valid_dataloader
+    )
 
-    return model, str(trainer.callback_metrics['val/loss'].item())
+    return model, str(trainer.callback_metrics["val/loss"].item())
 
 
 def load_model(args):
@@ -167,18 +193,26 @@ def load_model(args):
     latest_checkpoint_name = list(os.scandir(checkpoint_dir_path))[-1]
     latest_checkpoint_path = osp.join(checkpoint_dir_path, latest_checkpoint_name)
 
-    base_model = select_segmenter(args.encoder_weights, args.segmenter_name, args.encoder_name,
-                                  len(args.bands_to_keep) + args.extra_channels)
+    base_model = select_segmenter(
+        args.encoder_weights,
+        args.segmenter_name,
+        args.encoder_name,
+        len(args.bands_to_keep) + args.extra_channels,
+    )
 
     # This block might be redundant if we can download weights via the python segmentation models library.
     # However, it might be that not all weights are available this way.
     # If you have downloaded weights (in the .pt format), put them in the pre-trained-weights folder
     # and give the file the same name as the encoder you're using.
     # If you do that, this block will try and load them for your model.
-    pre_trained_weights_dir_path = osp.join(osp.dirname(data.__file__), "pre-trained_weights")
+    pre_trained_weights_dir_path = osp.join(
+        osp.dirname(data.__file__), "pre-trained_weights"
+    )
 
     if osp.exists(osp.join(pre_trained_weights_dir_path, f"{args.encoder_name}.pt")):
-        pre_trained_weights_path = osp.join(pre_trained_weights_dir_path, f"{args.encoder_name}.pt")
+        pre_trained_weights_path = osp.join(
+            pre_trained_weights_dir_path, f"{args.encoder_name}.pt"
+        )
     else:
         pre_trained_weights_path = None
 
@@ -200,7 +234,7 @@ def create_predictions(args):
     model = load_model(args)
     test_data_path = args.testing_features_path
 
-    with open(args.testing_ids_path, newline='') as f:
+    with open(args.testing_ids_path, newline="") as f:
         reader = csv.reader(f)
         patch_name_data = list(reader)
     patch_names = patch_name_data[0]
@@ -217,12 +251,18 @@ def create_predictions(args):
                 all_bands = []
                 for s1_index in range(0, 4):
                     if args.S1_band_selection[s1_index] == 1:
-                        band = np.load(osp.join(s1_folder_path, f"{s1_index}.npy"), allow_pickle=True)
+                        band = np.load(
+                            osp.join(s1_folder_path, f"{s1_index}.npy"),
+                            allow_pickle=True,
+                        )
                         all_bands.append(band)
 
                 for s2_index in range(0, 10):
                     if args.S2_band_selection[s2_index] == 1:
-                        band = np.load(osp.join(s2_folder_path, f"{s2_index}.npy"), allow_pickle=True)
+                        band = np.load(
+                            osp.join(s2_folder_path, f"{s2_index}.npy"),
+                            allow_pickle=True,
+                        )
                         all_bands.append(band)
 
                 input_tensor = create_tensor(all_bands)
@@ -245,7 +285,7 @@ def create_submissions(args):
     model = load_model(args)
     test_data_path = args.converted_testing_features_path
 
-    with open(args.testing_ids_path, newline='') as f:
+    with open(args.testing_ids_path, newline="") as f:
         reader = csv.reader(f)
         patch_name_data = list(reader)
     patch_names = patch_name_data[0]
@@ -263,27 +303,38 @@ def create_submissions(args):
                 all_list = []
 
                 for s1_index in range(11):
-                    band = np.load(osp.join(s2_folder_path, f"{s1_index}.npy"),
-                                   allow_pickle=True)
+                    band = np.load(
+                        osp.join(s2_folder_path, f"{s1_index}.npy"), allow_pickle=True
+                    )
                     all_list.append(band)
 
                 for s2_index in range(4):
-                    band = np.load(osp.join(s1_folder_path, f"{s2_index}.npy"),
-                                   allow_pickle=True)
+                    band = np.load(
+                        osp.join(s1_folder_path, f"{s2_index}.npy"), allow_pickle=True
+                    )
                     all_list.append(band)
 
                 all_tensor = create_tensor(all_list)
                 label_tensor = torch.rand((256, 256))
 
-                sample = {'image': all_tensor, 'label': label_tensor}  # 'image' and 'label' are used by torchgeo
+                sample = {
+                    "image": all_tensor,
+                    "label": label_tensor,
+                }  # 'image' and 'label' are used by torchgeo
 
-                corrupted_transform_method, transform_channels = tf.select_transform_method(args.transform_method,
-                                                                                            in_channels=len(args.bands_to_keep))
+                (
+                    corrupted_transform_method,
+                    transform_channels,
+                ) = tf.select_transform_method(
+                    args.transform_method, in_channels=len(args.bands_to_keep)
+                )
 
-                selected_tensor = apply_transforms(bands_to_keep=args.bands_to_keep,
-                                                   corrupted_transform_method=corrupted_transform_method)(sample)
+                selected_tensor = apply_transforms(
+                    bands_to_keep=args.bands_to_keep,
+                    corrupted_transform_method=corrupted_transform_method,
+                )(sample)
 
-                selected_tensor = selected_tensor['image']
+                selected_tensor = selected_tensor["image"]
                 pred = model(selected_tensor.unsqueeze(0))
                 pred = pred.cpu().squeeze().detach().numpy()
                 all_months.append(pred)
@@ -310,7 +361,7 @@ def create_submissions(args):
 def experimental_submission(args):
     model = load_model(args)
 
-    with open(args.testing_ids_path, newline='') as f:
+    with open(args.testing_ids_path, newline="") as f:
         reader = csv.reader(f)
         patch_name_data = list(reader)
     chip_ids = patch_name_data[0]
@@ -321,20 +372,23 @@ def experimental_submission(args):
 
         for id in chip_ids:
             for month in range(0, 12):
-                month_patch_path = osp.join(args.converted_testing_features_path, id, str(month))
+                month_patch_path = osp.join(
+                    args.converted_testing_features_path, id, str(month)
+                )
                 if osp.exists(osp.join(month_patch_path, "S2")):
                     id_month_list.append((id, str(month)))
 
-        corrupted_transform_method, transform_channels = tf.select_transform_method(args.transform_method,
-                                                                                    in_channels=len(args.bands_to_keep))
-        new_dataset = SubmissionDataLoader(args,
-                                           id_month_list,
-                                           corrupted_transform_method)
+        corrupted_transform_method, transform_channels = tf.select_transform_method(
+            args.transform_method, in_channels=len(args.bands_to_keep)
+        )
+        new_dataset = SubmissionDataLoader(
+            args, id_month_list, corrupted_transform_method
+        )
     else:
         sys.exit("Error: Invalid data type selected.")
 
-    trainer = Trainer(accelerator="gpu", devices=1)
-    dl = DataLoader(new_dataset, num_workers=18)
+    trainer = Trainer(accelerator="cpu", devices=1)
+    dl = DataLoader(new_dataset, num_workers=4)
 
     predictions = trainer.predict(model, dataloaders=dl)
     tensor_id_list = [i[0] for i in id_month_list]
@@ -364,7 +418,7 @@ def set_args():
     data_type = "npy"  # options are "npy" or "tiff"
     epochs = 40
     learning_rate = 1e-4
-    dataloader_workers = 18
+    dataloader_workers = 1
     validation_fraction = 0.2
     batch_size = 64
     log_step_frequency = 200
@@ -380,79 +434,132 @@ def set_args():
 
     band_map = {
         # S2 bands
-        0: 'S2-B2: Blue-10m',
-        1: 'S2-B3: Green-10m',
-        2: 'S2-B4: Red-10m',
-        3: 'S2-B5: VegRed-704nm-20m',
-        4: 'S2-B6: VegRed-740nm-20m',
-        5: 'S2-B7: VegRed-780nm-20m',
-        6: 'S2-B8: NIR-833nm-10m',
-        7: 'S2-B8A: NarrowNIR-864nm-20m',
-        8: 'S2-B11: SWIR-1610nm-20m',
-        9: 'S2-B12: SWIR-2200nm-20m',
-        10: 'S2-CLP: CloudProb-160m',
+        0: "S2-B2: Blue-10m",
+        1: "S2-B3: Green-10m",
+        2: "S2-B4: Red-10m",
+        3: "S2-B5: VegRed-704nm-20m",
+        4: "S2-B6: VegRed-740nm-20m",
+        5: "S2-B7: VegRed-780nm-20m",
+        6: "S2-B8: NIR-833nm-10m",
+        7: "S2-B8A: NarrowNIR-864nm-20m",
+        8: "S2-B11: SWIR-1610nm-20m",
+        9: "S2-B12: SWIR-2200nm-20m",
+        10: "S2-CLP: CloudProb-160m",
         # S1 bands
-        11: 'S1-VV-Asc: Cband-10m',
-        12: 'S1-VH-Asc: Cband-10m',
-        13: 'S1-VV-Desc: Cband-10m',
-        14: 'S1-VH-Desc: Cband-10m',
+        11: "S1-VV-Asc: Cband-10m",
+        12: "S1-VH-Asc: Cband-10m",
+        13: "S1-VV-Desc: Cband-10m",
+        14: "S1-VH-Desc: Cband-10m",
         # Bands derived by transforms
-        15: 'S2-NDVI: (NIR-Red)/(NIR+Red) 10m',
-        16: 'S1-NDVVVH-Asc: Norm Diff VV & VH, 10m',
-        17: 'S2-NDBI: Difference Built-up Index, 20m',
-        18: 'S2-NDRE: Red Edge Vegetation Index, 20m',
-        19: 'S2-NDSI: Snow Index, 20m',
-        20: 'S2-NDWI: Water Index, 10m',
-        21: 'S2-SWI: Sandardized Water-Level Index, 20m',
-        22: 'S1-VV/VH-Asc: Cband-10m',
-        23: 'S2-VV/VH-Desc: Cband-10m'
+        15: "S2-NDVI: (NIR-Red)/(NIR+Red) 10m",
+        16: "S1-NDVVVH-Asc: Norm Diff VV & VH, 10m",
+        17: "S2-NDBI: Difference Built-up Index, 20m",
+        18: "S2-NDRE: Red Edge Vegetation Index, 20m",
+        19: "S2-NDSI: Snow Index, 20m",
+        20: "S2-NDWI: Water Index, 10m",
+        21: "S2-SWI: Sandardized Water-Level Index, 20m",
+        22: "S1-VV/VH-Asc: Cband-10m",
+        23: "S2-VV/VH-Desc: Cband-10m",
     }
 
-    bands_to_keep = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 15, 16, 17, 18, 19, 20, 21]
+    bands_to_keep = [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11,
+        12,
+        15,
+        16,
+        17,
+        18,
+        19,
+        20,
+        21,
+    ]
     band_indicator = ["1" if k in bands_to_keep else "0" for k, v in band_map.items()]
+    image_batch_size = 32
 
     parser = argparse.ArgumentParser()
-    bands_to_keep_indicator = "bands-" + ''.join(str(x) for x in band_indicator)
+    bands_to_keep_indicator = "bands-" + "".join(str(x) for x in band_indicator)
     model_identifier = f"{model_segmenter}_{model_encoder}_{bands_to_keep_indicator}"
 
-    parser.add_argument('--model_identifier', default=model_identifier, type=str)
-    parser.add_argument('--segmenter_name', default=model_segmenter, type=str)
-    parser.add_argument('--encoder_name', default=model_encoder, type=str)
-    parser.add_argument('--encoder_weights', default=model_encoder_weights, type=str)
-    parser.add_argument('--model_version', default=version, type=int)
-    parser.add_argument('--data_type', default=data_type, type=str)
+    parser.add_argument("--model_identifier", default=model_identifier, type=str)
+    parser.add_argument("--segmenter_name", default=model_segmenter, type=str)
+    parser.add_argument("--encoder_name", default=model_encoder, type=str)
+    parser.add_argument("--encoder_weights", default=model_encoder_weights, type=str)
+    parser.add_argument("--model_version", default=version, type=int)
+    parser.add_argument("--data_type", default=data_type, type=str)
 
     data_path = osp.dirname(data.__file__)
     models_path = osp.dirname(models.__file__)
-    parser.add_argument('--converted_training_features_path', default=str(osp.join(data_path, "converted")), type=str)
-    parser.add_argument('--converted_testing_features_path', default=str(osp.join(data_path, "testing_converted")), type=str)
+    parser.add_argument(
+        "--converted_training_features_path",
+        default=str(osp.join(data_path, "converted")),
+        type=str,
+    )
+    parser.add_argument(
+        "--converted_testing_features_path",
+        default=str(osp.join(data_path, "testing_converted")),
+        type=str,
+    )
 
-    parser.add_argument('--training_ids_path', default=str(osp.join(data_path, "patch_names")), type=str)
-    parser.add_argument('--testing_ids_path', default=str(osp.join(data_path, "test_patch_names")), type=str)
-    parser.add_argument('--current_model_path', default=str(osp.join(models_path, "tb_logs", model_identifier)),
-                        type=str)
-    parser.add_argument('--submission_folder_path', default=str(osp.join(data_path, "imgs", "test_agbm")), type=str)
+    parser.add_argument(
+        "--training_ids_path", default=str(osp.join(data_path, "patch_names")), type=str
+    )
+    parser.add_argument(
+        "--testing_ids_path",
+        default=str(osp.join(data_path, "test_patch_names")),
+        type=str,
+    )
+    parser.add_argument(
+        "--current_model_path",
+        default=str(osp.join(models_path, "tb_logs", model_identifier)),
+        type=str,
+    )
+    parser.add_argument(
+        "--submission_folder_path",
+        default=str(osp.join(data_path, "imgs", "test_agbm")),
+        type=str,
+    )
 
-    parser.add_argument('--dataloader_workers', default=dataloader_workers, type=int)
-    parser.add_argument('--batch_size', default=batch_size, type=int)
-    parser.add_argument('--epochs', default=epochs, type=int)
-    parser.add_argument('--learning_rate', default=learning_rate, type=float)
-    parser.add_argument('--validation_fraction', default=validation_fraction, type=float)
-    parser.add_argument('--log_step_frequency', default=log_step_frequency, type=int)
-    parser.add_argument('--save_top_k_checkpoints', default=save_top_k_checkpoints, type=int)
+    parser.add_argument("--dataloader_workers", default=dataloader_workers, type=int)
+    parser.add_argument("--batch_size", default=batch_size, type=int)
+    parser.add_argument("--epochs", default=epochs, type=int)
+    parser.add_argument("--learning_rate", default=learning_rate, type=float)
+    parser.add_argument(
+        "--validation_fraction", default=validation_fraction, type=float
+    )
+    parser.add_argument("--log_step_frequency", default=log_step_frequency, type=int)
+    parser.add_argument(
+        "--save_top_k_checkpoints", default=save_top_k_checkpoints, type=int
+    )
 
-    parser.add_argument('--bands_to_keep', default=bands_to_keep, type=list)
-    parser.add_argument('--train_loss_function', default=train_loss_function)
-    parser.add_argument('--val_loss_function', default=val_loss_function)
-    parser.add_argument('--transform_method', default=transform_method, type=str)
-    parser.add_argument('--extra_channels', default=extra_channels, type=int)
+    parser.add_argument("--bands_to_keep", default=bands_to_keep, type=list)
+    parser.add_argument("--train_loss_function", default=train_loss_function)
+    parser.add_argument("--val_loss_function", default=val_loss_function)
+    parser.add_argument("--transform_method", default=transform_method, type=str)
+    parser.add_argument("--extra_channels", default=extra_channels, type=int)
+    parser.add_argument(
+        "--image_batch_size",
+        default=image_batch_size,
+        type=int,
+        help="target size for the divided (BatchedUp) image",
+    )
 
     args = parser.parse_args()
 
     return args
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     args = set_args()
     _, score = train(args)
     # print(score)

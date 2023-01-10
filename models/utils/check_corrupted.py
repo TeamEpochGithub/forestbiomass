@@ -14,7 +14,9 @@ def create_coordinates():
     all_horizontal = left + middle + right
     combinations = [(x, y) for y in center_coordinates for x in all_horizontal]
 
-    combinations_chunks = [combinations[x:x + 25] for x in range(0, len(combinations), 25)]
+    combinations_chunks = [
+        combinations[x : x + 25] for x in range(0, len(combinations), 25)
+    ]
     return combinations_chunks
 
 

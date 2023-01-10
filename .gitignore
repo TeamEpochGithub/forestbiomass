@@ -1,11 +1,13 @@
 .idea
+data/
 data/imgs
 data/converted
 data/testing_converted
 data/forest-biomass
 data/forest-biomass-test
 models/vit_checkpoints
-models/tb_logs
+models/tb_logs/**
+tb_logs/**
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
