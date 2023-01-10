@@ -188,7 +188,7 @@ class ChainedSegmenter(pl.LightningModule):
 
             if torch.sum(current_band) == 0:
                 batch_count = current_band.size(dim=0)
-                segmented_bands_list.append(torch.zeros(batch_count, 1, 256, 256))
+                segmented_bands_list.append(torch.cuda.FloatTensor(batch_count, 1, 256, 256).fill_(0))
                 continue
 
             result = self.band_model(current_band)
@@ -210,7 +210,7 @@ class ChainedSegmenter(pl.LightningModule):
 
             if torch.sum(current_band) == 0:
                 batch_count = current_band.size(dim=0)
-                segmented_bands_list.append(torch.zeros(batch_count, 1, 256, 256))
+                segmented_bands_list.append(torch.cuda.FloatTensor(batch_count, 1, 256, 256).fill_(0))
                 continue
 
             result = self.band_model(current_band)
@@ -234,7 +234,7 @@ class ChainedSegmenter(pl.LightningModule):
 
             if torch.sum(current_band) == 0:
                 batch_count = current_band.size(dim=0)
-                segmented_bands_list.append(torch.zeros(batch_count, 1, 256, 256))
+                segmented_bands_list.append(torch.cuda.FloatTensor(batch_count, 1, 256, 256).fill_(0))
                 continue
 
             result = self.band_model(current_band)
@@ -724,6 +724,8 @@ def set_args():
     data_path = osp.dirname(data.__file__)
     models_path = osp.dirname(models.__file__)
 
+    data_path = r"C:\Users\kuipe\Desktop\Epoch\forestbiomass\data"
+
     # Note: Converted data does not have an explicit label path, as labels are stored within training_features
     parser.add_argument('--converted_training_features_path', default=str(osp.join(data_path, "converted")), type=str)
     parser.add_argument('--converted_testing_features_path', default=str(osp.join(data_path, "testing_converted")),
@@ -733,7 +735,7 @@ def set_args():
     parser.add_argument('--tiff_training_labels_path', default=str(osp.join(data_path, "imgs", "train_agbm")))
     parser.add_argument('--tiff_testing_features_path', default=str(osp.join(data_path, "imgs", "test_features")))
 
-    parser.add_argument('--training_ids_path', default=str(osp.join(data_path, "local_patch_names")), type=str)
+    parser.add_argument('--training_ids_path', default=str(osp.join(data_path, "patch_names")), type=str)
     parser.add_argument('--testing_ids_path', default=str(osp.join(data_path, "test_patch_names")), type=str)
 
     parser.add_argument('--current_model_path', default=str(osp.join(models_path, "tb_logs", model_identifier)),
