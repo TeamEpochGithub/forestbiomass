@@ -8,6 +8,7 @@ import os.path as osp
 from torch.utils.data import Dataset
 import torch
 import warnings
+import torch.nn.functional as F
 
 warnings.filterwarnings("ignore", category=rasterio.errors.NotGeoreferencedWarning)
 
@@ -18,25 +19,24 @@ class SentinelDataLoader(Dataset):
         self.bands_to_keep = args.bands_to_keep
         self.id_month_list = id_month_list
         self.corrupted_transform_method = corrupted_transform_method
+        self.image_patch_size = args.image_patch_size
         assert (
-            256 // self.image_size == 256 / self.image_size,
-            "Number has to be integer fraction of 256",
-        )
-        assert (self.image_size % 32 == 0, "Number has to be divisble by 32")
-        self.image_batch_size = args.image_batch_size
-        self.num_batches = 256 // self.image_batch_size
+            256 // self.image_patch_size == 256 / self.image_patch_size
+        ), "Number has to be integer fraction of 256"
+        assert self.image_patch_size % 32 == 0, "Number has to be divisble by 32"
+        self.num_patches = (256 // self.image_patch_size) ** 2  # symmetrical
 
     def __len__(self):
-        return len(self.id_month_list) * self.num_batche
+        return len(self.id_month_list)
 
     def __getitem__(self, idx):
-
-        id, month = self.id_month_list[idx]
+        # this is hell a inefficent way to do this, better to have a list of all the patches and then just index into it but i don't wanna mess with your structure here so keeping it for now
+        id, month = self.id_month_list[idx // self.num_patches]
 
         label_path = osp.join(self.training_data_path, id, "label.npy")
         label = np.load(label_path, allow_pickle=True)
         label_tensor = torch.tensor(np.asarray([label], dtype=np.float32))
-        label_tensor = label_tensor[:, :32, :32]
+        label_tensor = label_tensor
 
         all_list = []
 
@@ -55,6 +55,11 @@ class SentinelDataLoader(Dataset):
             all_list.append(band)
 
         all_tensor = create_tensor(all_list)
+
+        all_tensor = divide_into_patches(all_tensor, self.image_patch_size)
+        all_tensor = all_tensor
+        label_tensor = divide_into_patches(label_tensor, self.image_patch_size)
+        label_tensor = label_tensor
 
         sample = {
             "image": all_tensor,
@@ -73,6 +78,12 @@ class SubmissionDataLoader(Dataset):
         self.id_month_list = id_month_list
         self.corrupted_transform_method = corrupted_transform_method
         self.bands_to_keep = args.bands_to_keep
+        self.image_patch_size = args.image_patch_size
+        assert (
+            256 // self.image_patch_size == 256 / self.image_patch_size
+        ), "Number has to be integer fraction of 256"
+        assert self.image_patch_size % 32 == 0, "Number has to be divisble by 32"
+        self.num_patches = (256 // self.image_patch_size) ** 2  # symmetrical
 
     def __len__(self):
         return len(self.id_month_list)
@@ -80,7 +91,7 @@ class SubmissionDataLoader(Dataset):
     def __getitem__(self, idx):
         id, month = self.id_month_list[idx]
 
-        label_tensor = torch.rand((32, 32))
+        label_tensor = torch.rand((self.image_patch_size, self.image_patch_size))
 
         all_list = []
 
@@ -99,6 +110,10 @@ class SubmissionDataLoader(Dataset):
             all_list.append(band)
 
         all_tensor = create_tensor(all_list)
+        all_tensor = divide_into_patches(all_tensor, self.image_patch_size)
+        all_tensor = all_tensor
+        label_tensor = divide_into_patches(label_tensor, self.image_patch_size)
+        label_tensor = label_tensor
 
         transforms = nn.Sequential(
             # tf.ClampAGBM(vmin=0., vmax=500.),  # exclude AGBM outliers, 500 is good upper limit per AGBM histograms
@@ -143,8 +158,7 @@ def create_tensor(band_list):
         band_tensor.std(dim=(1, 2)) + 0.01
     )
     band_tensor = band_tensor.permute(2, 0, 1)
-    band_tensor = band_tensor[:, :32, :32]
-    print(band_tensor.shape)
+    # print(band_tensor.shape)
 
     return band_tensor
 
@@ -176,3 +190,47 @@ def apply_transforms(corrupted_transform_method, bands_to_keep):
         ),  # DROPS ALL BUT SPECIFIED bands_to_keep
         corrupted_transform_method,  # Applies corrupted band transformation
     )
+
+
+def reasamble_patches(patches, num_patches=8, kernel_size=32, stride=32):
+    patch_shape = patches.shape
+    channels = patch_shape[1]
+    unfold_shape = (
+        patch_shape[1],
+        num_patches,
+        num_patches,
+        patch_shape[2],
+        patch_shape[3],
+    )
+    patches_orig = patches.view(unfold_shape)
+    output_h = unfold_shape[1] * unfold_shape[3]
+    output_w = unfold_shape[2] * unfold_shape[4]
+    patches_orig = patches_orig.permute(0, 1, 3, 2, 4).contiguous()
+    patches_orig = patches_orig.view(channels, output_h, output_w)
+    # import matplotlib.pyplot as plt
+    # plt.imshow(patches_orig[0, :, :].to(torch.float64))
+    # plt.colorbar()
+    # plt.show()
+    return patches_orig
+
+
+def divide_into_patches(image, patch_size):
+    channels = image.shape[0]
+    patches = image.unfold(-2, patch_size, patch_size).unfold(
+        -2, patch_size, patch_size
+    )
+    unfold_shape = patches.size()
+    patches = patches.contiguous().view(-1, channels, patch_size, patch_size)
+    # print(patches.shape)
+    # patches_orig = patches.view(unfold_shape)
+    # output_h = unfold_shape[1] * unfold_shape[3]
+    # output_w = unfold_shape[2] * unfold_shape[4]
+    # patches_orig = patches_orig.permute(0, 1, 3, 2, 4).contiguous()
+    # patches_orig = patches_orig.view(channels, output_h, output_w)
+    # # import matplotlib.pyplot as plt
+
+    # plt.imshow(image[0, :, :])
+    # plt.show()
+    # plt.imshow(patches_orig[0, :, :])
+    # plt.show()
+    return patches

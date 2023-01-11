@@ -25,6 +25,7 @@ from models.utils.patched_dataloading import (
     create_tensor,
     SubmissionDataLoader,
     apply_transforms,
+    reasamble_patches,
 )
 import operator
 import sys
@@ -44,6 +45,8 @@ class Sentinel2Model(pl.LightningModule):
 
     def training_step(self, batch, batch_idx):
         x, y = batch
+        x = x.view(-1, x.shape[2], x.shape[3], x.shape[4])
+        y = y.view(-1, y.shape[2], y.shape[3], y.shape[4])
         y_hat = self.model(x)
         loss = self.train_loss_function(y_hat, y)
         self.log("train/loss", loss)
@@ -51,10 +54,19 @@ class Sentinel2Model(pl.LightningModule):
 
     def validation_step(self, batch, batch_idx):
         x, y = batch
+        x = x.view(-1, x.shape[2], x.shape[3], x.shape[4])
+        y = y.view(-1, y.shape[2], y.shape[3], y.shape[4])
         y_hat = self.model(x)
         loss = self.val_loss_function(y_hat, y)
         self.log("val/loss", loss)
+        y_hat_orig = reasamble_patches(y_hat)
+        y_orig = reasamble_patches(y)
+        orig_loss = self.val_loss_function(y_hat_orig, y_orig)
+        self.log("val/full_loss", orig_loss)
         return loss
+
+    def on_validation_epoch_end(self):
+        return None
 
     def configure_optimizers(self):
         return [torch.optim.Adam(self.parameters(), lr=self.learning_rate)]
@@ -83,8 +95,9 @@ def prepare_dataset(args):
     corrupted_transform_method, transform_channels = tf.select_transform_method(
         args.transform_method, in_channels=in_channels
     )
-
+    # print(len(id_month_list))
     dataset = SentinelDataLoader(args, id_month_list, corrupted_transform_method)
+    # print(len(dataset))
     return dataset, (in_channels + transform_channels)
 
 
@@ -112,10 +125,19 @@ def train(args):
     print("Getting train data...")
 
     train_dataset, number_of_channels = prepare_dataset(args)
-
+    # print(len(train_dataset))
+    # train_size = int(
+    #     (1 - args.validation_fraction)
+    #     * (len(train_dataset) // train_dataset.num_patches)
+    # )
+    # valid_size = len(train_dataset) // train_dataset.num_patches - train_size
+    # train_size, valid_size = (
+    #     train_dataset.num_patches * train_size,
+    #     train_dataset.num_patches * valid_size,
+    # )
+    # print(train_size, valid_size)
     train_size = int(1 - args.validation_fraction * len(train_dataset))
     valid_size = len(train_dataset) - train_size
-
     train_set, val_set = torch.utils.data.random_split(
         train_dataset, [train_size, valid_size]
     )
@@ -132,7 +154,6 @@ def train(args):
         shuffle=False,
         num_workers=args.dataloader_workers,
     )
-
     base_model = select_segmenter(
         args.encoder_weights, args.segmenter_name, args.encoder_name, number_of_channels
     )
@@ -168,6 +189,7 @@ def train(args):
         log_every_n_steps=args.log_step_frequency,
         callbacks=[checkpoint_callback],
         num_sanity_val_steps=0,
+        precision=16,
         accelerator="cpu",
         # devices=[0],
         # num_nodes=4,
@@ -420,7 +442,7 @@ def set_args():
     learning_rate = 1e-4
     dataloader_workers = 1
     validation_fraction = 0.2
-    batch_size = 64
+    batch_size = 1
     log_step_frequency = 200
     version = 5  # Keep -1 if loading the latest model version.
     save_top_k_checkpoints = 3
@@ -485,7 +507,7 @@ def set_args():
         21,
     ]
     band_indicator = ["1" if k in bands_to_keep else "0" for k, v in band_map.items()]
-    image_batch_size = 32
+    image_patch_size = 32
 
     parser = argparse.ArgumentParser()
     bands_to_keep_indicator = "bands-" + "".join(str(x) for x in band_indicator)
@@ -548,13 +570,17 @@ def set_args():
     parser.add_argument("--transform_method", default=transform_method, type=str)
     parser.add_argument("--extra_channels", default=extra_channels, type=int)
     parser.add_argument(
-        "--image_batch_size",
-        default=image_batch_size,
+        "--image_patch_size",
+        default=image_patch_size,
         type=int,
-        help="target size for the divided (BatchedUp) image",
+        help="target size for the divided (PatchedUp) image",
     )
 
     args = parser.parse_args()
+    # assert (
+    #     args.batch_size // (256 / args.image_patch_size) ** 2
+    #     == args.batch_size / (256 / args.image_patch_size) ** 2
+    # ), "Batch size must be divisible by image patch size"
 
     return args
 

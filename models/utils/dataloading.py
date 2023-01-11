@@ -29,7 +29,7 @@ class SentinelDataLoader(Dataset):
         label_path = osp.join(self.training_data_path, id, "label.npy")
         label = np.load(label_path, allow_pickle=True)
         label_tensor = torch.tensor(np.asarray([label], dtype=np.float32))
-        label_tensor = label_tensor[:, :32, :32]
+        label_tensor = label_tensor
 
         all_list = []
 
@@ -73,7 +73,7 @@ class SubmissionDataLoader(Dataset):
     def __getitem__(self, idx):
         id, month = self.id_month_list[idx]
 
-        label_tensor = torch.rand((32, 32))
+        label_tensor = torch.rand((256, 256))
 
         all_list = []
 
@@ -136,7 +136,7 @@ def create_tensor(band_list):
         band_tensor.std(dim=(1, 2)) + 0.01
     )
     band_tensor = band_tensor.permute(2, 0, 1)
-    band_tensor = band_tensor[:, :32, :32]
+    band_tensor = band_tensor
     print(band_tensor.shape)
 
     return band_tensor

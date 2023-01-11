@@ -165,12 +165,12 @@ class ReplaceCorruptedZeros(nn.Module):
         super().__init__()
 
     def forward(self, inputs):
-        X = inputs["image"].detach()
+        # X = inputs["image"].detach()
 
         # for ind, band in enumerate(X):
         #     if is_corrupted(np.array(band)):
         #         X[ind] = torch.zeros((256, 256))
-        inputs["image"] = X
+        # inputs["image"] = X
         return inputs
 
 
