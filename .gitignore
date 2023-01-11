@@ -8,6 +8,7 @@ data/forest-biomass-test
 models/vit_checkpoints
 models/tb_logs/**
 tb_logs/**
+wandb/**
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

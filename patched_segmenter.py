@@ -29,10 +29,14 @@ from models.utils.patched_dataloading import (
 )
 import operator
 import sys
-
+import wandb
+from pytorch_lightning.loggers import WandbLogger
 from models.utils.simple_tensor_accumulate import accumulate_predictions
 
 warnings.filterwarnings("ignore", category=rasterio.errors.NotGeoreferencedWarning)
+wandb_logger = WandbLogger(
+    project="patch_segmenter_basic", entity="team-epoch", tags="", log_model=False
+)
 
 
 class Sentinel2Model(pl.LightningModule):
@@ -49,7 +53,7 @@ class Sentinel2Model(pl.LightningModule):
         y = y.view(-1, y.shape[2], y.shape[3], y.shape[4])
         y_hat = self.model(x)
         loss = self.train_loss_function(y_hat, y)
-        self.log("train/loss", loss)
+        self.log("train/loss", loss, rank_zero_only=True)
         return loss
 
     def validation_step(self, batch, batch_idx):
@@ -58,11 +62,11 @@ class Sentinel2Model(pl.LightningModule):
         y = y.view(-1, y.shape[2], y.shape[3], y.shape[4])
         y_hat = self.model(x)
         loss = self.val_loss_function(y_hat, y)
-        self.log("val/loss", loss)
+        self.log("val/loss", loss, rank_zero_only=True)
         y_hat_orig = reasamble_patches(y_hat)
         y_orig = reasamble_patches(y)
         orig_loss = self.val_loss_function(y_hat_orig, y_orig)
-        self.log("val/full_loss", orig_loss)
+        self.log("val/full_loss", orig_loss, rank_zero_only=True)
         return loss
 
     def on_validation_epoch_end(self):
@@ -174,7 +178,7 @@ def train(args):
 
     model = Sentinel2Model(base_model, args)
 
-    logger = TensorBoardLogger("tb_logs", name=args.model_identifier)
+    # logger = TensorBoardLogger("tb_logs", name=args.model_identifier)
 
     checkpoint_callback = ModelCheckpoint(
         save_top_k=args.save_top_k_checkpoints,
@@ -183,9 +187,11 @@ def train(args):
     )
 
     # ddp = DDPStrategy(process_group_backend="gloo")
+    # wandb_logger.watch(model, log="all", log_graph=False)
     trainer = Trainer(
         max_epochs=args.epochs,
-        logger=[logger],
+        # logger=[logger],
+        logger=wandb_logger,
         log_every_n_steps=args.log_step_frequency,
         callbacks=[checkpoint_callback],
         num_sanity_val_steps=0,
@@ -193,12 +199,13 @@ def train(args):
         accelerator="cpu",
         # devices=[0],
         # num_nodes=4,
-        # strategy=ddp
+        #  strategy="ddp",
     )
 
     trainer.fit(
         model, train_dataloaders=train_dataloader, val_dataloaders=valid_dataloader
     )
+    wandb.finish()
 
     return model, str(trainer.callback_metrics["val/loss"].item())
 
@@ -440,7 +447,7 @@ def set_args():
     data_type = "npy"  # options are "npy" or "tiff"
     epochs = 40
     learning_rate = 1e-4
-    dataloader_workers = 1
+    dataloader_workers = 4
     validation_fraction = 0.2
     batch_size = 1
     log_step_frequency = 200
