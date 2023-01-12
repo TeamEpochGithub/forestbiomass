@@ -20,7 +20,8 @@ import csv
 from models.utils import loss_functions
 import argparse
 import models.utils.transforms as tf
-from models.utils.dataloading import SentinelDataLoader, create_tensor, SubmissionDataLoader, apply_transforms
+from models.utils.dataloading import SentinelTiffDataloader, SentinelTiffDataloaderSubmission, create_tensor, \
+    apply_transforms
 import operator
 import sys
 
@@ -58,26 +59,68 @@ class Sentinel2Model(pl.LightningModule):
         return self.model(x)
 
 
-def prepare_dataset(args):
-    with open(args.training_ids_path, newline='\n') as f:
+def prepare_dataset_training(args):
+    with open(args.training_ids_path, newline='') as f:
         reader = csv.reader(f)
         patch_name_data = list(reader)
     chip_ids = patch_name_data[0]
-    # chip_ids = chip_ids[0:500]
+
+    training_features_path = args.tiff_training_features_path
 
     id_month_list = []
-    for id in chip_ids:
+
+    for current_id in chip_ids:
         for month in range(0, 12):
-            month_patch_path = osp.join(args.converted_training_features_path, id, str(month))
-            if osp.exists(osp.join(month_patch_path, "S2")):
-                id_month_list.append((id, str(month)))
 
-    in_channels = len(args.bands_to_keep)
+            if month < 10:
+                month = "0" + str(month)
+
+            month_patch_path = osp.join(training_features_path, f"{current_id}_S2_{month}.tif")
+            if osp.exists(month_patch_path):
+                id_month_list.append((current_id, month))
+
     corrupted_transform_method, transform_channels = tf.select_transform_method(args.transform_method,
-                                                                                in_channels=in_channels)
+                                                                                in_channels=len(
+                                                                                    args.bands_to_keep))
 
-    dataset = SentinelDataLoader(args, id_month_list, corrupted_transform_method)
-    return dataset, (in_channels + transform_channels)
+    new_dataset = SentinelTiffDataloader(training_features_path,
+                                         args.tiff_training_labels_path,
+                                         id_month_list,
+                                         args.bands_to_keep,
+                                         corrupted_transform_method)
+
+    return new_dataset
+
+
+def prepare_dataset_testing(args) -> Dataset:
+    with open(args.testing_ids_path, newline='') as f:
+        reader = csv.reader(f)
+        patch_name_data = list(reader)
+    chip_ids = patch_name_data[0]
+
+    testing_features_path = args.tiff_testing_features_path
+
+    id_month_list = []
+
+    for current_id in chip_ids:
+        for month in range(0, 12):
+
+            if month < 10:
+                month = "0" + str(month)
+
+            month_patch_path = osp.join(testing_features_path, f"{current_id}_S2_{month}.tif")
+            if osp.exists(month_patch_path):
+                id_month_list.append((current_id, month))
+
+    corrupted_transform_method, transform_channels = tf.select_transform_method(args.transform_method,
+                                                                                in_channels=len(
+                                                                                    args.bands_to_keep))
+
+    new_dataset = SentinelTiffDataloaderSubmission(testing_features_path,
+                                                   id_month_list,
+                                                   args.bands_to_keep,
+                                                   corrupted_transform_method)
+    return new_dataset, id_month_list
 
 
 def select_segmenter(encoder_weights, segmenter_name, encoder_name, number_of_channels):
@@ -103,7 +146,7 @@ def train(args):
 
     print("Getting train data...")
 
-    train_dataset, number_of_channels = prepare_dataset(args)
+    train_dataset = prepare_dataset_training(args)
 
     train_size = int(1 - args.validation_fraction * len(train_dataset))
     valid_size = len(train_dataset) - train_size
@@ -115,17 +158,7 @@ def train(args):
     valid_dataloader = DataLoader(val_set, batch_size=args.batch_size, shuffle=False,
                                   num_workers=args.dataloader_workers)
 
-    base_model = select_segmenter(args.encoder_weights, args.segmenter_name, args.encoder_name, number_of_channels)
-
-    pre_trained_weights_dir_path = osp.join(osp.dirname(data.__file__), "pre-trained_weights")
-
-    if osp.exists(osp.join(pre_trained_weights_dir_path, f"{args.encoder_name}.pt")):
-        pre_trained_weights_path = osp.join(pre_trained_weights_dir_path, f"{args.encoder_name}.pt")
-    else:
-        pre_trained_weights_path = None
-
-    if pre_trained_weights_path is not None:
-        base_model.encoder.load_state_dict(torch.load(pre_trained_weights_path))
+    base_model = select_segmenter(args.encoder_weights, args.segmenter_name, args.encoder_name, len(args.bands_to_keep))
 
     model = Sentinel2Model(base_model, args)
 
@@ -145,7 +178,7 @@ def train(args):
         callbacks=[checkpoint_callback],
         num_sanity_val_steps=0,
         accelerator='gpu',
-        devices=[1],
+        devices=1,
         # num_nodes=4,
         # strategy=ddp
     )
@@ -196,144 +229,14 @@ def load_model(args):
     return model
 
 
-def create_predictions(args):
-    model = load_model(args)
-    test_data_path = args.testing_features_path
-
-    with open(args.testing_ids_path, newline='') as f:
-        reader = csv.reader(f)
-        patch_name_data = list(reader)
-    patch_names = patch_name_data[0]
-
-    predictions = []
-    for index, id in enumerate(patch_names):
-
-        all_months = []
-        for month in range(0, 12):
-            s1_folder_path = osp.join(test_data_path, id, f"{month:02}", "S1")
-            s2_folder_path = osp.join(test_data_path, id, f"{month:02}", "S2")
-
-            if osp.exists(s2_folder_path):
-                all_bands = []
-                for s1_index in range(0, 4):
-                    if args.S1_band_selection[s1_index] == 1:
-                        band = np.load(osp.join(s1_folder_path, f"{s1_index}.npy"), allow_pickle=True)
-                        all_bands.append(band)
-
-                for s2_index in range(0, 10):
-                    if args.S2_band_selection[s2_index] == 1:
-                        band = np.load(osp.join(s2_folder_path, f"{s2_index}.npy"), allow_pickle=True)
-                        all_bands.append(band)
-
-                input_tensor = create_tensor(all_bands)
-                pred = model(input_tensor.unsqueeze(0))
-                pred = pred.cpu().squeeze().detach().numpy()
-                all_months.append(pred)
-
-        count = len(all_months)
-        prediction = np.asarray(sum(all_months) / count)
-        predictions.append(prediction)
-
-        total = len(patch_names)
-        if index % 100 == 0:
-            print(f"{index} / {total}")
-
-    return predictions
-
-
 def create_submissions(args):
-    model = load_model(args)
-    test_data_path = args.converted_testing_features_path
 
-    with open(args.testing_ids_path, newline='') as f:
-        reader = csv.reader(f)
-        patch_name_data = list(reader)
-    patch_names = patch_name_data[0]
-
-    predictions = []
-    for index, id in tqdm(enumerate(patch_names)):
-
-        all_months = []
-        for month in range(0, 12):
-
-            s1_folder_path = osp.join(test_data_path, id, f"{month:02}", "S1")
-            s2_folder_path = osp.join(test_data_path, id, f"{month:02}", "S2")
-
-            if osp.exists(s2_folder_path):
-                all_list = []
-
-                for s1_index in range(11):
-                    band = np.load(osp.join(s2_folder_path, f"{s1_index}.npy"),
-                                   allow_pickle=True)
-                    all_list.append(band)
-
-                for s2_index in range(4):
-                    band = np.load(osp.join(s1_folder_path, f"{s2_index}.npy"),
-                                   allow_pickle=True)
-                    all_list.append(band)
-
-                all_tensor = create_tensor(all_list)
-                label_tensor = torch.rand((256, 256))
-
-                sample = {'image': all_tensor, 'label': label_tensor}  # 'image' and 'label' are used by torchgeo
-
-                corrupted_transform_method, transform_channels = tf.select_transform_method(args.transform_method,
-                                                                                            in_channels=len(args.bands_to_keep))
-
-                selected_tensor = apply_transforms(bands_to_keep=args.bands_to_keep,
-                                                   corrupted_transform_method=corrupted_transform_method)(sample)
-
-                selected_tensor = selected_tensor['image']
-                pred = model(selected_tensor.unsqueeze(0))
-                pred = pred.cpu().squeeze().detach().numpy()
-                all_months.append(pred)
-
-        count = len(all_months)
-
-        if count == 0:
-            continue
-
-        agbm_arr = np.asarray(sum(all_months) / count)
-
-        test_agbm_path = osp.join(args.submission_folder_path, f"{id}_agbm.tif")
-        im = Image.fromarray(agbm_arr)
-        im.save(test_agbm_path)
-
-        total = len(patch_names)
-
-        if index % 100 == 0:
-            print(f"{index} / {total}")
-
-    return predictions
-
-
-def experimental_submission(args):
     model = load_model(args)
 
-    with open(args.testing_ids_path, newline='') as f:
-        reader = csv.reader(f)
-        patch_name_data = list(reader)
-    chip_ids = patch_name_data[0]
-
-    id_month_list = []
-
-    if args.data_type == "npy":
-
-        for id in chip_ids:
-            for month in range(0, 12):
-                month_patch_path = osp.join(args.converted_testing_features_path, id, str(month))
-                if osp.exists(osp.join(month_patch_path, "S2")):
-                    id_month_list.append((id, str(month)))
-
-        corrupted_transform_method, transform_channels = tf.select_transform_method(args.transform_method,
-                                                                                    in_channels=len(args.bands_to_keep))
-        new_dataset = SubmissionDataLoader(args,
-                                           id_month_list,
-                                           corrupted_transform_method)
-    else:
-        sys.exit("Error: Invalid data type selected.")
+    new_dataset, id_month_list = prepare_dataset_testing(args)
 
     trainer = Trainer(accelerator="gpu", devices=1)
+
     dl = DataLoader(new_dataset, num_workers=18)
 
     predictions = trainer.predict(model, dataloaders=dl)
@@ -361,14 +264,14 @@ def set_args():
     model_segmenter = "Unet"
     model_encoder = "efficientnet-b2"
     model_encoder_weights = "imagenet"  # Leave None if not using weights.
-    data_type = "npy"  # options are "npy" or "tiff"
-    epochs = 40
+    data_type = "tiff"  # options are "npy" or "tiff"
+    epochs = 1
     learning_rate = 1e-4
-    dataloader_workers = 18
+    dataloader_workers = 1
     validation_fraction = 0.2
-    batch_size = 64
+    batch_size = 1
     log_step_frequency = 200
-    version = 5  # Keep -1 if loading the latest model version.
+    version = -1  # Keep -1 if loading the latest model version.
     save_top_k_checkpoints = 3
     transform_method = "replace_corrupted_0s"  # "replace_corrupted_noise"  # nothing  # add_band_corrupted_arrays
     train_loss_function = loss_functions.rmse_loss
@@ -408,7 +311,7 @@ def set_args():
         23: 'S2-VV/VH-Desc: Cband-10m'
     }
 
-    bands_to_keep = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 15, 16, 17, 18, 19, 20, 21]
+    bands_to_keep = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23]
     band_indicator = ["1" if k in bands_to_keep else "0" for k, v in band_map.items()]
 
     parser = argparse.ArgumentParser()
@@ -424,8 +327,10 @@ def set_args():
 
     data_path = osp.dirname(data.__file__)
     models_path = osp.dirname(models.__file__)
-    parser.add_argument('--converted_training_features_path', default=str(osp.join(data_path, "converted")), type=str)
-    parser.add_argument('--converted_testing_features_path', default=str(osp.join(data_path, "testing_converted")), type=str)
+
+    parser.add_argument('--tiff_training_features_path', default=str(osp.join(data_path, "imgs", "train_features")))
+    parser.add_argument('--tiff_training_labels_path', default=str(osp.join(data_path, "imgs", "train_agbm")))
+    parser.add_argument('--tiff_testing_features_path', default=str(osp.join(data_path, "imgs", "test_features")))
 
     parser.add_argument('--training_ids_path', default=str(osp.join(data_path, "patch_names")), type=str)
     parser.add_argument('--testing_ids_path', default=str(osp.join(data_path, "test_patch_names")), type=str)
@@ -454,7 +359,7 @@ def set_args():
 
 if __name__ == '__main__':
     args = set_args()
-    _, score = train(args)
+    #_, score = train(args)
     # print(score)
 
     create_submissions(args)
