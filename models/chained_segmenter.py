@@ -1,3 +1,6 @@
+import os
+# os.environ["PYTORCH_CUDA_ALLOC_CONF"] = 'max_split_size_mb:23900'
+
 import itertools
 import operator
 import sys
@@ -8,7 +11,7 @@ import numpy
 from torch.utils.data import Dataset, DataLoader
 from torch import distributed as dist
 import segmentation_models_pytorch as smp
-import os
+
 import rasterio
 from pytorch_lightning import Trainer
 import pytorch_lightning as pl
@@ -23,6 +26,8 @@ import csv
 from models.utils import loss_functions
 from pytorch_lightning.strategies import DDPStrategy
 import argparse
+import torch.nn as nn
+from models.se_net import SqEx
 
 warnings.filterwarnings("ignore", category=rasterio.errors.NotGeoreferencedWarning)
 
@@ -107,6 +112,8 @@ class ChainedSegmentationSubmissionDatasetMaker(Dataset):
                 sys.exit("Incorrect data type passed to dataloader maker")
 
             tensor_list.append(feature_tensor)
+
+        tensor_list = torch.cat(tensor_list, dim=0)
 
         return tensor_list
 
@@ -196,7 +203,9 @@ class ChainedSegmenter(pl.LightningModule):
 
         month_tensor = torch.cat(segmented_bands_list, dim=1)
 
-        y_hat = self.month_model(month_tensor)
+        # y_hat = self.month_model(month_tensor)
+        y_hat, attn_output_weights = self.month_model(month_tensor, month_tensor, month_tensor)
+        print(y_hat.shape)
         loss = self.loss_function(y_hat, y)
         self.log("train/loss", loss)
 
@@ -302,6 +311,22 @@ def select_segmenter(segmenter_name, encoder_name, encoder_weights, channel_coun
             classes=1,
             encoder_weights=encoder_weights
         )
+    elif segmenter_name == "DeepLabV3+":
+
+        base_model = smp.DeepLabV3Plus(
+            encoder_name=encoder_name,
+            in_channels=channel_count,
+            classes=1,
+            encoder_weights=encoder_weights
+        )
+    elif segmenter_name == "PAN":
+
+        base_model = smp.PAN(
+            encoder_name=encoder_name,
+            in_channels=channel_count,
+            classes=1,
+            encoder_weights=encoder_weights
+        )
     else:
         base_model = None
 
@@ -348,6 +373,9 @@ def train(args):
                                              args.month_encoder_name,
                                              args.month_encoder_weights_name,
                                              month_channel_count)
+    #month_segmenter_model=SqEx(12,12)
+    month_segmenter_model = nn.MultiheadAttention(12, 1, batch_first=True)
+
 
     model = ChainedSegmenter(band_model=band_segmenter_model,
                              month_model=month_segmenter_model,
@@ -363,14 +391,17 @@ def train(args):
         mode="min",
     )
 
+    ddp = DDPStrategy(process_group_backend="gloo")
+
     trainer = Trainer(
         accelerator="gpu",
-        devices=1,
+        devices=2,
         max_epochs=args.epochs,
         logger=[logger],
         log_every_n_steps=args.log_step_frequency,
         callbacks=[checkpoint_callback],
-        num_sanity_val_steps=0
+        num_sanity_val_steps=0,
+        strategy=ddp
     )
 
     trainer.fit(model, train_dataloaders=train_dataloader, val_dataloaders=valid_dataloader)
@@ -625,20 +656,20 @@ def chained_experimental_submission(args):
 
 def set_args():
     band_segmenter = "Unet"
-    band_encoder = "efficientnet-b2"
+    band_encoder = "efficientnet-b1"
     band_encoder_weights = "imagenet"
 
     month_segmenter = "Unet"
-    month_encoder = "efficientnet-b2"
+    month_encoder = "efficientnet-b1"
     month_encoder_weights = "imagenet"
 
     data_type = "npy"  # options are "npy" or "tiff"
-    epochs = 20
+    epochs = 60
     learning_rate = 1e-4
     dataloader_workers = 12
     validation_fraction = 0.2
     batch_size = 8
-    log_step_frequency = 10
+    log_step_frequency = 50
     version = -1  # Keep -1 if loading the latest model version.
     save_top_k_checkpoints = 3
     loss_function = loss_functions.rmse_loss
@@ -770,5 +801,4 @@ def set_args():
 if __name__ == '__main__':
     args = set_args()
     train(args)
-    # create_submissions(args)
-    # chained_experimental_submission(args)
+    chained_experimental_submission(args)
