@@ -13,7 +13,7 @@ import os.path as osp
 from pytorch_lightning.loggers import TensorBoardLogger
 from pytorch_lightning.callbacks import ModelCheckpoint
 from tqdm import tqdm
-
+from efficientnet_swin import Efficient_Swin
 import models
 import data
 import csv
@@ -24,36 +24,44 @@ from models.utils.dataloading import SentinelTiffDataloader, SentinelTiffDataloa
     apply_transforms
 import operator
 import sys
-
+from models.utils.warmup_scheduler.scheduler import GradualWarmupScheduler
 from models.utils.simple_tensor_accumulate import accumulate_predictions
 
 warnings.filterwarnings("ignore", category=rasterio.errors.NotGeoreferencedWarning)
 
-
 class Sentinel2Model(pl.LightningModule):
-    def __init__(self, model, args):
+    def __init__(self, model, epochs, warmup_epochs, learning_rate, weight_decay, loss_function):
         super().__init__()
         self.model = model
-        self.learning_rate = args.learning_rate
-        self.train_loss_function = args.train_loss_function
-        self.val_loss_function = args.val_loss_function
+        self.epochs = epochs
+        self.warmup_epochs = warmup_epochs
+        self.learning_rate = learning_rate
+        self.weight_decay = weight_decay
+        self.loss_function = loss_function
 
     def training_step(self, batch, batch_idx):
         x, y = batch
         y_hat = self.model(x)
-        loss = self.train_loss_function(y_hat, y)
+        loss = self.loss_function(y_hat, y)
         self.log("train/loss", loss)
+        self.scheduler.step()
         return loss
 
     def validation_step(self, batch, batch_idx):
         x, y = batch
         y_hat = self.model(x)
-        loss = self.val_loss_function(y_hat, y)
+        loss = self.loss_function(y_hat, y)
         self.log("val/loss", loss)
         return loss
 
     def configure_optimizers(self):
-        return [torch.optim.Adam(self.parameters(), lr=self.learning_rate)]
+        optimizer = torch.optim.AdamW(self.parameters(), lr=self.learning_rate, betas=(0.9, 0.999), eps=1e-8, weight_decay=self.weight_decay)
+        scheduler_cosine = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, self.epochs - self.warmup_epochs,
+                                                                eta_min=1e-6)
+        self.scheduler = GradualWarmupScheduler(optimizer,
+                                           multiplier=1, total_epoch=self.warmup_epochs,
+                                           after_scheduler=scheduler_cosine)
+        return [optimizer], [self.scheduler]
 
     def forward(self, x):
         return self.model(x)
@@ -103,7 +111,7 @@ def prepare_dataset_testing(args) -> Dataset:
     id_month_list = []
 
     for current_id in chip_ids:
-        for month in range(0, 12):
+        for month in range(5, 12):
 
             if month < 10:
                 month = "0" + str(month)
@@ -158,9 +166,10 @@ def train(args):
     valid_dataloader = DataLoader(val_set, batch_size=args.batch_size, shuffle=False,
                                   num_workers=args.dataloader_workers)
 
-    base_model = select_segmenter(args.encoder_weights, args.segmenter_name, args.encoder_name, len(args.bands_to_keep))
+    # base_model = select_segmenter(args.encoder_weights, args.segmenter_name, args.encoder_name, len(args.bands_to_keep))
+    base_model = Efficient_Swin()
 
-    model = Sentinel2Model(base_model, args)
+    model = Sentinel2Model(model=base_model, epochs=args.epochs, warmup_epochs=args.warmup_epochs, learning_rate=args.learning_rate, weight_decay=args.weight_decay, loss_function=args.loss_function)
 
     logger = TensorBoardLogger("tb_logs", name=args.model_identifier)
 
@@ -220,7 +229,7 @@ def load_model(args):
 
     ###########################################################
 
-    model = Sentinel2Model(base_model, args)
+    model = Sentinel2Model(model=base_model, epochs=args.epochs, warmup_epochs=args.warmup_epochs, learning_rate=args.learning_rate, weight_decay=args.weight_decay, loss_function=args.loss_function)
 
     checkpoint = torch.load(str(latest_checkpoint_path))
     model.load_state_dict(checkpoint["state_dict"])
@@ -261,15 +270,14 @@ def create_submissions(args):
 
 
 def set_args():
-    model_segmenter = "Unet"
-    model_encoder = "efficientnet-b2"
-    model_encoder_weights = "imagenet"  # Leave None if not using weights.
     data_type = "tiff"  # options are "npy" or "tiff"
-    epochs = 1
+    epochs = 1000
+    warmup_epochs = 20
     learning_rate = 1e-4
-    dataloader_workers = 1
-    validation_fraction = 0.2
-    batch_size = 1
+    weight_decay = 5e-4
+    dataloader_workers = 4
+    validation_fraction = 0.15
+    batch_size = 16
     log_step_frequency = 200
     version = -1  # Keep -1 if loading the latest model version.
     save_top_k_checkpoints = 3
@@ -316,12 +324,12 @@ def set_args():
 
     parser = argparse.ArgumentParser()
     bands_to_keep_indicator = "bands-" + ''.join(str(x) for x in band_indicator)
-    model_identifier = f"{model_segmenter}_{model_encoder}_{bands_to_keep_indicator}"
+    model_identifier = f"efficientnet_swin_{bands_to_keep_indicator}"
 
     parser.add_argument('--model_identifier', default=model_identifier, type=str)
-    parser.add_argument('--segmenter_name', default=model_segmenter, type=str)
-    parser.add_argument('--encoder_name', default=model_encoder, type=str)
-    parser.add_argument('--encoder_weights', default=model_encoder_weights, type=str)
+    # parser.add_argument('--segmenter_name', default=model_segmenter, type=str)
+    # parser.add_argument('--encoder_name', default=model_encoder, type=str)
+    # parser.add_argument('--encoder_weights', default=model_encoder_weights, type=str)
     parser.add_argument('--model_version', default=version, type=int)
     parser.add_argument('--data_type', default=data_type, type=str)
 
