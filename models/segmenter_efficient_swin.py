@@ -169,7 +169,7 @@ def train(args):
     # base_model = select_segmenter(args.encoder_weights, args.segmenter_name, args.encoder_name, len(args.bands_to_keep))
     base_model = Efficient_Swin()
 
-    model = Sentinel2Model(model=base_model, epochs=args.epochs, warmup_epochs=args.warmup_epochs, learning_rate=args.learning_rate, weight_decay=args.weight_decay, loss_function=args.loss_function)
+    model = Sentinel2Model(model=base_model, epochs=args.epochs, warmup_epochs=args.warmup_epochs, learning_rate=args.learning_rate, weight_decay=args.weight_decay, loss_function=args.train_loss_function)
 
     logger = TensorBoardLogger("tb_logs", name=args.model_identifier)
 
@@ -335,6 +335,7 @@ def set_args():
 
     data_path = osp.dirname(data.__file__)
     models_path = osp.dirname(models.__file__)
+    data_path = r"C:\Users\Team Epoch A\Documents\Epoch III\forestbiomass\data"
 
     parser.add_argument('--tiff_training_features_path', default=str(osp.join(data_path, "imgs", "train_features")))
     parser.add_argument('--tiff_training_labels_path', default=str(osp.join(data_path, "imgs", "train_agbm")))
@@ -359,6 +360,8 @@ def set_args():
     parser.add_argument('--val_loss_function', default=val_loss_function)
     parser.add_argument('--transform_method', default=transform_method, type=str)
     parser.add_argument('--extra_channels', default=extra_channels, type=int)
+    parser.add_argument('--warmup_epochs', default=warmup_epochs, type=int)
+    parser.add_argument('--weight_decay', default=weight_decay, type=float)
 
     args = parser.parse_args()
 
@@ -367,7 +370,7 @@ def set_args():
 
 if __name__ == '__main__':
     args = set_args()
-    #_, score = train(args)
+    _, score = train(args)
     # print(score)
 
-    create_submissions(args)
+    # create_submissions(args)
