@@ -25,6 +25,7 @@ from models.utils.patched_dataloading import (
     create_tensor,
     SubmissionDataLoader,
     apply_transforms,
+    divide_into_patches,
     reasamble_patches,
 )
 import operator
@@ -34,9 +35,6 @@ from pytorch_lightning.loggers import WandbLogger
 from models.utils.simple_tensor_accumulate import accumulate_predictions
 
 warnings.filterwarnings("ignore", category=rasterio.errors.NotGeoreferencedWarning)
-wandb_logger = WandbLogger(
-    project="patch_segmenter_basic", entity="team-epoch", tags="", log_model=False
-)
 
 
 class Sentinel2Model(pl.LightningModule):
@@ -46,6 +44,41 @@ class Sentinel2Model(pl.LightningModule):
         self.learning_rate = args.learning_rate
         self.train_loss_function = args.train_loss_function
         self.val_loss_function = args.val_loss_function
+
+    def training_step(self, batch, batch_idx):
+        x, y = batch
+        y_hat = self.model(x)
+        loss = self.train_loss_function(y_hat, y)
+        self.log("train/loss", loss, rank_zero_only=True)
+        return loss
+
+    def validation_step(self, batch, batch_idx):
+        x, y = batch
+        y_hat = self.model(x)
+        loss = self.val_loss_function(y_hat, y)
+        self.log("val/loss", loss, rank_zero_only=True)
+        return loss
+
+    def on_validation_epoch_end(self):
+        return None
+
+    def configure_optimizers(self):
+        return [torch.optim.Adam(self.parameters(), lr=self.learning_rate)]
+
+    def forward(self, x):
+        return self.model(x)
+
+
+class PatchedSentinel2Model(pl.LightningModule):
+    def __init__(self, model, args):
+        super().__init__()
+        self.model = model
+        self.learning_rate = args.learning_rate
+        self.train_loss_function = args.train_loss_function
+        self.val_loss_function = args.val_loss_function
+        self.image_patch_size = args.image_patch_size
+        self.num_patches = (256 // self.image_patch_size) ** 2  # symmetrical
+        self.num_patches_per_dim = int(np.sqrt(self.num_patches))
 
     def training_step(self, batch, batch_idx):
         x, y = batch
@@ -63,8 +96,8 @@ class Sentinel2Model(pl.LightningModule):
         y_hat = self.model(x)
         loss = self.val_loss_function(y_hat, y)
         self.log("val/loss", loss, rank_zero_only=True)
-        y_hat_orig = reasamble_patches(y_hat)
-        y_orig = reasamble_patches(y)
+        y_hat_orig = reasamble_patches(y_hat, self.num_patches_per_dim)
+        y_orig = reasamble_patches(y, self.num_patches_per_dim)
         orig_loss = self.val_loss_function(y_hat_orig, y_orig)
         self.log("val/full_loss", orig_loss, rank_zero_only=True)
         return loss
@@ -76,6 +109,7 @@ class Sentinel2Model(pl.LightningModule):
         return [torch.optim.Adam(self.parameters(), lr=self.learning_rate)]
 
     def forward(self, x):
+        x = x.view(-1, x.shape[2], x.shape[3], x.shape[4])
         return self.model(x)
 
 
@@ -176,9 +210,18 @@ def train(args):
     if pre_trained_weights_path is not None:
         base_model.encoder.load_state_dict(torch.load(pre_trained_weights_path))
 
-    model = Sentinel2Model(base_model, args)
+    if args.patched:
+        model = PatchedSentinel2Model(base_model, args)
+    else:
+        model = Sentinel2Model(base_model, args)
 
-    # logger = TensorBoardLogger("tb_logs", name=args.model_identifier)
+    logger = TensorBoardLogger(
+        osp.join(args.models_path, "tb_logs"),
+        name=args.model_identifier,
+    )
+    wandb_logger = WandbLogger(
+        project="patch_segmenter_basic", entity="team-epoch", tags="", log_model=False
+    )
 
     checkpoint_callback = ModelCheckpoint(
         save_top_k=args.save_top_k_checkpoints,
@@ -190,12 +233,11 @@ def train(args):
     # wandb_logger.watch(model, log="all", log_graph=False)
     trainer = Trainer(
         max_epochs=args.epochs,
-        # logger=[logger],
-        logger=wandb_logger,
+        logger=[logger, wandb_logger],
         log_every_n_steps=args.log_step_frequency,
         callbacks=[checkpoint_callback],
         num_sanity_val_steps=0,
-        precision=16,
+        precision=args.precision,
         accelerator="cpu",
         # devices=[0],
         # num_nodes=4,
@@ -250,7 +292,10 @@ def load_model(args):
 
     ###########################################################
 
-    model = Sentinel2Model(base_model, args)
+    if args.patched:
+        model = PatchedSentinel2Model(base_model, args)
+    else:
+        model = Sentinel2Model(base_model, args)
 
     checkpoint = torch.load(str(latest_checkpoint_path))
     model.load_state_dict(checkpoint["state_dict"])
@@ -344,8 +389,10 @@ def create_submissions(args):
                     all_list.append(band)
 
                 all_tensor = create_tensor(all_list)
-                label_tensor = torch.rand((256, 256))
-
+                label_tensor = torch.rand((1, 256, 256))
+                all_tensor = divide_into_patches(all_tensor, args.image_patch_size)
+                label_tensor = divide_into_patches(label_tensor, args.image_patch_size)
+                print(all_tensor.shape)
                 sample = {
                     "image": all_tensor,
                     "label": label_tensor,
@@ -365,6 +412,7 @@ def create_submissions(args):
 
                 selected_tensor = selected_tensor["image"]
                 pred = model(selected_tensor.unsqueeze(0))
+                pred = reasamble_patches(pred)
                 pred = pred.cpu().squeeze().detach().numpy()
                 all_months.append(pred)
 
@@ -417,9 +465,18 @@ def experimental_submission(args):
         sys.exit("Error: Invalid data type selected.")
 
     trainer = Trainer(accelerator="cpu", devices=1)
-    dl = DataLoader(new_dataset, num_workers=4)
+    dl = DataLoader(
+        new_dataset,
+        num_workers=4,
+        batch_size=args.batch_size,
+        shuffle=False,
+    )
 
     predictions = trainer.predict(model, dataloaders=dl)
+    predictions = [
+        reasamble_patches(prediction, int(np.sqrt(new_dataset.num_patches)))
+        for prediction in predictions
+    ]
     tensor_id_list = [i[0] for i in id_month_list]
 
     transformed_predictions = [x.cpu().squeeze().detach().numpy() for x in predictions]
@@ -445,17 +502,18 @@ def set_args():
     model_encoder = "efficientnet-b2"
     model_encoder_weights = "imagenet"  # Leave None if not using weights.
     data_type = "npy"  # options are "npy" or "tiff"
-    epochs = 40
+    epochs = 2
     learning_rate = 1e-4
     dataloader_workers = 4
     validation_fraction = 0.2
     batch_size = 1
-    log_step_frequency = 200
-    version = 5  # Keep -1 if loading the latest model version.
-    save_top_k_checkpoints = 3
+    log_step_frequency = 10
+    version = -1  # Keep -1 if loading the latest model version.
+    save_top_k_checkpoints = 1
     transform_method = "replace_corrupted_0s"  # "replace_corrupted_noise"  # nothing  # add_band_corrupted_arrays
     train_loss_function = loss_functions.rmse_loss
     val_loss_function = loss_functions.rmse_loss
+    patched = True
 
     # WARNING: Only increment extra_channels when making predictions/submission (based on the transform method used)
     # it is automatically incremented during training based on the transform method used (extra channels generated)
@@ -515,6 +573,7 @@ def set_args():
     ]
     band_indicator = ["1" if k in bands_to_keep else "0" for k, v in band_map.items()]
     image_patch_size = 32
+    precision = 16
 
     parser = argparse.ArgumentParser()
     bands_to_keep_indicator = "bands-" + "".join(str(x) for x in band_indicator)
@@ -529,6 +588,11 @@ def set_args():
 
     data_path = osp.dirname(data.__file__)
     models_path = osp.dirname(models.__file__)
+    parser.add_argument(
+        "--models_path",
+        default=str(models_path),
+        type=str,
+    )
     parser.add_argument(
         "--converted_training_features_path",
         default=str(osp.join(data_path, "converted")),
@@ -582,6 +646,8 @@ def set_args():
         type=int,
         help="target size for the divided (PatchedUp) image",
     )
+    parser.add_argument("--patched", default=patched, type=bool)
+    parser.add_argument("--precision", default=precision, type=int)
 
     args = parser.parse_args()
     # assert (
@@ -594,7 +660,8 @@ def set_args():
 
 if __name__ == "__main__":
     args = set_args()
-    _, score = train(args)
+    # _, score = train(args)
     # print(score)
 
-    create_submissions(args)
+    # create_submissions(args)
+    experimental_submission(args)

@@ -57,9 +57,7 @@ class SentinelDataLoader(Dataset):
         all_tensor = create_tensor(all_list)
 
         all_tensor = divide_into_patches(all_tensor, self.image_patch_size)
-        all_tensor = all_tensor
         label_tensor = divide_into_patches(label_tensor, self.image_patch_size)
-        label_tensor = label_tensor
 
         sample = {
             "image": all_tensor,
@@ -91,7 +89,7 @@ class SubmissionDataLoader(Dataset):
     def __getitem__(self, idx):
         id, month = self.id_month_list[idx]
 
-        label_tensor = torch.rand((self.image_patch_size, self.image_patch_size))
+        label_tensor = torch.rand((1, self.image_patch_size, self.image_patch_size))
 
         all_list = []
 
@@ -110,10 +108,6 @@ class SubmissionDataLoader(Dataset):
             all_list.append(band)
 
         all_tensor = create_tensor(all_list)
-        all_tensor = divide_into_patches(all_tensor, self.image_patch_size)
-        all_tensor = all_tensor
-        label_tensor = divide_into_patches(label_tensor, self.image_patch_size)
-        label_tensor = label_tensor
 
         transforms = nn.Sequential(
             # tf.ClampAGBM(vmin=0., vmax=500.),  # exclude AGBM outliers, 500 is good upper limit per AGBM histograms
@@ -139,6 +133,9 @@ class SubmissionDataLoader(Dataset):
             ),  # DROPS ALL BUT SPECIFIED bands_to_keep
             self.corrupted_transform_method,  # Applies corrupted band transformation
         )
+
+        all_tensor = divide_into_patches(all_tensor, self.image_patch_size)
+        label_tensor = divide_into_patches(label_tensor, self.image_patch_size)
 
         sample = {
             "image": all_tensor,
@@ -192,7 +189,7 @@ def apply_transforms(corrupted_transform_method, bands_to_keep):
     )
 
 
-def reasamble_patches(patches, num_patches=8, kernel_size=32, stride=32):
+def reasamble_patches(patches, num_patches=8):
     patch_shape = patches.shape
     channels = patch_shape[1]
     unfold_shape = (
