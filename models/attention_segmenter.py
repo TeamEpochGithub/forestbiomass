@@ -186,6 +186,9 @@ class ChainedSegmenter(pl.LightningModule):
         self.learning_rate = learning_rate
         self.loss_function = loss_function
         self.repair_mode = repair_mode
+        self.v = nn.Linear(int(256 ** 2), 256).to("cuda")
+        self.k = nn.Linear(int(256 ** 2), 256).to("cuda")
+        self.q = nn.Linear(int(256 ** 2), 256).to("cuda")
 
     def training_step(self, batch, batch_idx):
         x, y = batch
@@ -204,17 +207,14 @@ class ChainedSegmenter(pl.LightningModule):
         month_tensor = torch.cat(segmented_bands_list, dim=1)
 
         # y_hat = self.month_model(month_tensor)
-        month_tensor=month_tensor.view(month_tensor.shape[0],month_tensor.shape[1],-1)
-        v=nn.Linear(int(256**2),256).to("cuda")(month_tensor)
-        k=nn.Linear(int(256**2),256).to("cuda")(month_tensor)
-        q=nn.Linear(int(256**2),256).to("cuda")(month_tensor)
+        month_tensor_reshaped = month_tensor.view(month_tensor.shape[0], month_tensor.shape[1], -1)
+        v = self.v(month_tensor_reshaped)
+        k = self.k(month_tensor_reshaped)
+        q = self.q(month_tensor_reshaped)
         y_hat_dense, attn_output_weights = self.month_model(v, k, q)
-        attn_output_weights=torch.sum(attn_output_weights,dim=(0,1))/torch.sum(attn_output_weights)
-        print(attn_output_weights)
-        # print(y_hat_dense.shape)
-        # print(attn_output_weights.shape)
-        y_hat=y*attn_output_weights.unsqueeze(0).unsqueeze(-1).unsqueeze(-1)
-        # print(y_hat.shape)
+        attn_output_weights = torch.sum(attn_output_weights, dim=(0, 1)) / torch.sum(attn_output_weights)
+        y_hat = month_tensor * attn_output_weights.unsqueeze(0).unsqueeze(-1).unsqueeze(-1)
+        y_hat = torch.sum(y_hat, dim=1).unsqueeze(1)
         loss = self.loss_function(y_hat, y)
         self.log("train/loss", loss)
 
@@ -236,7 +236,14 @@ class ChainedSegmenter(pl.LightningModule):
 
         month_tensor = torch.cat(segmented_bands_list, dim=1)
 
-        y_hat = self.month_model(month_tensor)
+        month_tensor_reshaped = month_tensor.view(month_tensor.shape[0], month_tensor.shape[1], -1)
+        v = self.v(month_tensor_reshaped)
+        k = self.k(month_tensor_reshaped)
+        q = self.q(month_tensor_reshaped)
+        y_hat_dense, attn_output_weights = self.month_model(v, k, q)
+        attn_output_weights = torch.sum(attn_output_weights, dim=(0, 1)) / torch.sum(attn_output_weights)
+        y_hat = month_tensor * attn_output_weights.unsqueeze(0).unsqueeze(-1).unsqueeze(-1)
+        y_hat = torch.sum(y_hat, dim=1).unsqueeze(1)
         loss = self.loss_function(y_hat, y)
         self.log("val/loss", loss)
 
@@ -260,7 +267,14 @@ class ChainedSegmenter(pl.LightningModule):
 
         month_tensor = torch.cat(segmented_bands_list, dim=1)
 
-        y_hat = self.month_model(month_tensor)
+        month_tensor_reshaped = month_tensor.view(month_tensor.shape[0], month_tensor.shape[1], -1)
+        v = self.v(month_tensor_reshaped)
+        k = self.k(month_tensor_reshaped)
+        q = self.q(month_tensor_reshaped)
+        y_hat_dense, attn_output_weights = self.month_model(v, k, q)
+        attn_output_weights = torch.sum(attn_output_weights, dim=(0, 1)) / torch.sum(attn_output_weights)
+        y_hat = month_tensor * attn_output_weights.unsqueeze(0).unsqueeze(-1).unsqueeze(-1)
+        y_hat = torch.sum(y_hat, dim=1).unsqueeze(1)
 
         return y_hat
 
@@ -382,9 +396,8 @@ def train(args):
                                              args.month_encoder_name,
                                              args.month_encoder_weights_name,
                                              month_channel_count)
-    #month_segmenter_model=SqEx(12,12)
+    # month_segmenter_model=SqEx(12,12)
     month_segmenter_model = nn.MultiheadAttention(256, 1, batch_first=True)
-
 
     model = ChainedSegmenter(band_model=band_segmenter_model,
                              month_model=month_segmenter_model,
@@ -665,7 +678,7 @@ def chained_experimental_submission(args):
 
 def set_args():
     band_segmenter = "Unet"
-    band_encoder = "efficientnet-b1"
+    band_encoder = "efficientnet-b2"
     band_encoder_weights = "imagenet"
 
     month_segmenter = "Unet"
