@@ -220,7 +220,11 @@ def train(args):
         name=args.model_identifier,
     )
     wandb_logger = WandbLogger(
-        project="patch_segmenter_basic", entity="team-epoch", tags="", log_model=False
+        name=args.model_identifier,
+        project="forestbiomass",
+        entity="team-epoch",
+        tags="",
+        log_model=False,
     )
 
     checkpoint_callback = ModelCheckpoint(
@@ -468,7 +472,7 @@ def experimental_submission(args):
     dl = DataLoader(
         new_dataset,
         num_workers=4,
-        batch_size=args.batch_size,
+        batch_size=1,  # args.batch_size,
         shuffle=False,
     )
 
@@ -502,11 +506,11 @@ def set_args():
     model_encoder = "efficientnet-b2"
     model_encoder_weights = "imagenet"  # Leave None if not using weights.
     data_type = "npy"  # options are "npy" or "tiff"
-    epochs = 2
+    epochs = 100
     learning_rate = 1e-4
     dataloader_workers = 4
     validation_fraction = 0.2
-    batch_size = 1
+    batch_size = 4
     log_step_frequency = 10
     version = -1  # Keep -1 if loading the latest model version.
     save_top_k_checkpoints = 1
@@ -577,7 +581,7 @@ def set_args():
 
     parser = argparse.ArgumentParser()
     bands_to_keep_indicator = "bands-" + "".join(str(x) for x in band_indicator)
-    model_identifier = f"{model_segmenter}_{model_encoder}_{bands_to_keep_indicator}"
+    model_identifier = f"{model_segmenter}_{model_encoder}_{bands_to_keep_indicator}_lr-{learning_rate}_bs-{batch_size}_transform-{transform_method}_loss-{train_loss_function.__name__}_precision-{precision}_patched-{patched}"
 
     parser.add_argument("--model_identifier", default=model_identifier, type=str)
     parser.add_argument("--segmenter_name", default=model_segmenter, type=str)
@@ -660,8 +664,8 @@ def set_args():
 
 if __name__ == "__main__":
     args = set_args()
-    # _, score = train(args)
+    _, score = train(args)
     # print(score)
 
     # create_submissions(args)
-    experimental_submission(args)
+    # experimental_submission(args)

@@ -192,8 +192,9 @@ def apply_transforms(corrupted_transform_method, bands_to_keep):
 def reasamble_patches(patches, num_patches=8):
     patch_shape = patches.shape
     channels = patch_shape[1]
+    batch_size = int(patch_shape[0] / num_patches**2)
     unfold_shape = (
-        patch_shape[1],
+        channels * batch_size,
         num_patches,
         num_patches,
         patch_shape[2],
@@ -203,7 +204,7 @@ def reasamble_patches(patches, num_patches=8):
     output_h = unfold_shape[1] * unfold_shape[3]
     output_w = unfold_shape[2] * unfold_shape[4]
     patches_orig = patches_orig.permute(0, 1, 3, 2, 4).contiguous()
-    patches_orig = patches_orig.view(channels, output_h, output_w)
+    patches_orig = patches_orig.view(channels * batch_size, output_h, output_w)
     # import matplotlib.pyplot as plt
     # plt.imshow(patches_orig[0, :, :].to(torch.float64))
     # plt.colorbar()
