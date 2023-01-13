@@ -133,14 +133,14 @@ class SentinelTiffDataloader(Dataset):
 
         feature_tensor = retrieve_tiff(self.training_feature_path, current_id, month)
 
-        sample = {'image': feature_tensor, 'label': label_tensor}
+        sample = {'image': feature_tensor}
 
         selected_tensor = apply_transforms(bands_to_keep=self.bands_to_keep,
                                            corrupted_transform_method=self.corrupted_transform_method)(sample)
 
-
         #return feature_tensor, label_tensor
-        return selected_tensor['image'], selected_tensor['label']
+        # return selected_tensor['image'], selected_tensor['label']
+        return selected_tensor['image'], label_tensor
 
 class SentinelTiffDataloader_all(Dataset):
     def __init__(self, training_feature_path, training_labels_path, chip_ids, bands_to_keep, corrupted_transform_method):
@@ -207,6 +207,38 @@ class SentinelTiffDataloaderSubmission(Dataset):
                                            corrupted_transform_method=self.corrupted_transform_method)(sample)
 
         return selected_tensor['image']
+    
+    
+class SentinelTiffDataloaderSubmission_all(Dataset):
+    def __init__(self, testing_features_path, chip_ids, bands_to_keep, corrupted_transform_method):
+        self.testing_features_path = testing_features_path
+        self.chip_ids = chip_ids
+        self.bands_to_keep = bands_to_keep
+        self.corrupted_transform_method = corrupted_transform_method
+
+    def __len__(self):
+        return len(self.chip_ids)
+
+    def __getitem__(self, idx):
+        current_id = self.chip_ids[idx]
+        times = 0
+        for month in range(5, 12):
+            if month < 10:
+                month = "0" + str(month)
+
+            feature_tensor = retrieve_tiff(self.testing_features_path, current_id, month)
+
+            sample = {'image': feature_tensor}
+
+            selected_tensor = apply_transforms_testing(bands_to_keep=self.bands_to_keep,
+                                            corrupted_transform_method=self.corrupted_transform_method)(sample)
+            if times==0:
+                data_tensor = selected_tensor['image']
+            else:
+                data_tensor = torch.cat((data_tensor, selected_tensor['image']), dim=0)
+            times+=1
+
+        return data_tensor
 
 
 def retrieve_tiff(feature_path, id, month):

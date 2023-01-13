@@ -21,7 +21,7 @@ from models.utils import loss_functions
 import argparse
 import models.utils.transforms as tf
 from models.utils.dataloading import SentinelTiffDataloader, SentinelTiffDataloaderSubmission, create_tensor, \
-    apply_transforms, SentinelTiffDataloader_all
+    apply_transforms, SentinelTiffDataloader_all, SentinelTiffDataloaderSubmission_all
 import operator
 import sys
 from models.utils.warmup_scheduler.scheduler import GradualWarmupScheduler
@@ -75,18 +75,6 @@ def prepare_dataset_training(args):
 
     training_features_path = args.tiff_training_features_path
 
-    # id_month_list = []
-    #
-    # for current_id in chip_ids:
-    #     for month in range(5, 12):
-    #
-    #         if month < 10:
-    #             month = "0" + str(month)
-    #
-    #         month_patch_path = osp.join(training_features_path, f"{current_id}_S2_{month}.tif")
-    #         if osp.exists(month_patch_path):
-    #             id_month_list.append((current_id, month))
-
     corrupted_transform_method, transform_channels = tf.select_transform_method(args.transform_method,
                                                                                 in_channels=len(
                                                                                     args.bands_to_keep))
@@ -108,27 +96,15 @@ def prepare_dataset_testing(args) -> Dataset:
 
     testing_features_path = args.tiff_testing_features_path
 
-    id_month_list = []
-
-    for current_id in chip_ids:
-        for month in range(5, 12):
-
-            if month < 10:
-                month = "0" + str(month)
-
-            month_patch_path = osp.join(testing_features_path, f"{current_id}_S2_{month}.tif")
-            if osp.exists(month_patch_path):
-                id_month_list.append((current_id, month))
-
     corrupted_transform_method, transform_channels = tf.select_transform_method(args.transform_method,
                                                                                 in_channels=len(
                                                                                     args.bands_to_keep))
 
-    new_dataset = SentinelTiffDataloaderSubmission(testing_features_path,
-                                                   id_month_list,
+    new_dataset = SentinelTiffDataloaderSubmission_all(testing_features_path,
+                                                   chip_ids,
                                                    args.bands_to_keep,
                                                    corrupted_transform_method)
-    return new_dataset, id_month_list
+    return new_dataset, chip_ids
 
 
 def select_segmenter(encoder_weights, segmenter_name, encoder_name, number_of_channels):
@@ -242,22 +218,19 @@ def create_submissions(args):
 
     model = load_model(args)
 
-    new_dataset, id_month_list = prepare_dataset_testing(args)
+    new_dataset, chip_ids = prepare_dataset_testing(args)
 
     trainer = Trainer(accelerator="gpu", devices=1)
 
-    dl = DataLoader(new_dataset, num_workers=18)
+    dl = DataLoader(new_dataset, num_workers=args.dataloader_workers)
 
     predictions = trainer.predict(model, dataloaders=dl)
-    tensor_id_list = [i[0] for i in id_month_list]
 
     transformed_predictions = [x.cpu().squeeze().detach().numpy() for x in predictions]
-    linked_tensor_list = list(zip(tensor_id_list, transformed_predictions))
+    linked_tensor_list = list(zip(chip_ids, transformed_predictions))
     linked_tensor_list = sorted(linked_tensor_list, key=operator.itemgetter(0))
 
-    averaged_tensor_list = list(accumulate_predictions(linked_tensor_list))
-
-    for id_tensor_pair in averaged_tensor_list:
+    for id_tensor_pair in linked_tensor_list:
         current_id = id_tensor_pair[0]
         current_tensor = id_tensor_pair[1]
 
