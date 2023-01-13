@@ -203,18 +203,7 @@ class ChainedSegmenter(pl.LightningModule):
 
         month_tensor = torch.cat(segmented_bands_list, dim=1)
 
-        # y_hat = self.month_model(month_tensor)
-        month_tensor=month_tensor.view(month_tensor.shape[0],month_tensor.shape[1],-1)
-        v=nn.Linear(int(256**2),256).to("cuda")(month_tensor)
-        k=nn.Linear(int(256**2),256).to("cuda")(month_tensor)
-        q=nn.Linear(int(256**2),256).to("cuda")(month_tensor)
-        y_hat_dense, attn_output_weights = self.month_model(v, k, q)
-        attn_output_weights=torch.sum(attn_output_weights,dim=(0,1))/torch.sum(attn_output_weights)
-        print(attn_output_weights)
-        # print(y_hat_dense.shape)
-        # print(attn_output_weights.shape)
-        y_hat=y*attn_output_weights.unsqueeze(0).unsqueeze(-1).unsqueeze(-1)
-        # print(y_hat.shape)
+        y_hat = self.month_model(month_tensor)
         loss = self.loss_function(y_hat, y)
         self.log("train/loss", loss)
 
@@ -320,6 +309,14 @@ def select_segmenter(segmenter_name, encoder_name, encoder_weights, channel_coun
             classes=1,
             encoder_weights=encoder_weights
         )
+    elif segmenter_name == "Unet++":
+
+        base_model = smp.UnetPlusPlus(
+            encoder_name=encoder_name,
+            in_channels=channel_count,
+            classes=1,
+            encoder_weights=encoder_weights
+        )
     elif segmenter_name == "DeepLabV3+":
 
         base_model = smp.DeepLabV3Plus(
@@ -382,9 +379,6 @@ def train(args):
                                              args.month_encoder_name,
                                              args.month_encoder_weights_name,
                                              month_channel_count)
-    #month_segmenter_model=SqEx(12,12)
-    month_segmenter_model = nn.MultiheadAttention(256, 1, batch_first=True)
-
 
     model = ChainedSegmenter(band_model=band_segmenter_model,
                              month_model=month_segmenter_model,
@@ -668,8 +662,8 @@ def set_args():
     band_encoder = "efficientnet-b1"
     band_encoder_weights = "imagenet"
 
-    month_segmenter = "Unet"
-    month_encoder = "efficientnet-b1"
+    month_segmenter = "Unet++"
+    month_encoder = "efficientnet-b0"
     month_encoder_weights = "imagenet"
 
     data_type = "npy"  # options are "npy" or "tiff"
