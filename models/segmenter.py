@@ -267,7 +267,7 @@ def set_args():
     data_type = "tiff"  # options are "npy" or "tiff"
     epochs = 1
     learning_rate = 1e-4
-    dataloader_workers = 1
+    dataloader_workers = 18
     validation_fraction = 0.2
     batch_size = 1
     log_step_frequency = 200
@@ -327,6 +327,7 @@ def set_args():
 
     data_path = osp.dirname(data.__file__)
     models_path = osp.dirname(models.__file__)
+    data_path = r"C:\Users\Team Epoch A\Documents\Epoch III\forestbiomass\data"
 
     parser.add_argument('--tiff_training_features_path', default=str(osp.join(data_path, "imgs", "train_features")))
     parser.add_argument('--tiff_training_labels_path', default=str(osp.join(data_path, "imgs", "train_agbm")))
@@ -359,7 +360,7 @@ def set_args():
 
 if __name__ == '__main__':
     args = set_args()
-    #_, score = train(args)
+    _, score = train(args)
     # print(score)
 
     create_submissions(args)
