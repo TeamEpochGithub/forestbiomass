@@ -1,3 +1,5 @@
+import random
+
 import rasterio
 from torch import nn
 from torchgeo.transforms import indices
@@ -8,9 +10,22 @@ import os.path as osp
 from torch.utils.data import Dataset
 import torch
 import warnings
+import random
+import copy
+random.seed(0)
 
 warnings.filterwarnings("ignore", category=rasterio.errors.NotGeoreferencedWarning)
 
+def create_tensor_from_bands_list(band_list):
+    band_array = np.asarray(band_list, dtype=np.float32)
+
+    band_tensor = torch.tensor(band_array)
+
+    # normalization happens here
+    # band_tensor = (band_tensor.permute(1, 2, 0) - band_tensor.mean(dim=(1, 2))) / (band_tensor.std(dim=(1, 2)) + 0.01)
+    # band_tensor = band_tensor.permute(2, 0, 1)
+
+    return band_tensor
 
 class SentinelDataLoader(Dataset):
     def __init__(self, args, id_month_list, corrupted_transform_method):
@@ -136,6 +151,49 @@ class SentinelTiffDataloader(Dataset):
 
         #return feature_tensor, label_tensor
         return selected_tensor['image'], selected_tensor['label']
+
+class SentinelTiffDataloader_all(Dataset):
+    def __init__(self, training_feature_path, training_labels_path, chip_ids, bands_to_keep, corrupted_transform_method):
+        self.training_feature_path = training_feature_path
+        self.training_labels_path = training_labels_path
+        self.chip_ids = chip_ids
+        self.bands_to_keep = bands_to_keep
+        self.corrupted_transform_method = corrupted_transform_method
+
+    def __len__(self):
+        return len(self.chip_ids)
+
+    def __getitem__(self, idx):
+        times = 0
+        current_id = self.chip_ids[idx]
+        label_path = osp.join(self.training_labels_path, f"{current_id}_agbm.tif")
+        label_tensor = torch.tensor(rasterio.open(label_path).read().astype(np.float32))
+        for month in range(5, 12):
+
+            if month < 10:
+                month = "0" + str(month)
+
+            month_patch_path = osp.join(self.training_feature_path, f"{current_id}_S2_{month}.tif")
+            if osp.exists(month_patch_path):
+                feature_tensor = retrieve_tiff(self.training_feature_path, current_id, month)
+                sample = {'image': feature_tensor, 'label': label_tensor}
+                selected_tensor = apply_transforms(bands_to_keep=self.bands_to_keep,
+                                                   corrupted_transform_method=self.corrupted_transform_method)(sample)
+                if times==0:
+                    data_tensor = selected_tensor['image']
+                else:
+                    data_tensor = torch.cat((data_tensor, selected_tensor['image']), dim=0)
+                times+=1
+
+        if data_tensor.shape[0]<161:
+            indexes = list(range(data_tensor.shape[0]))
+            for i in range(161-data_tensor.shape[0]):
+                random.shuffle(indexes)
+                tensor_temp = copy.deepcopy(data_tensor[indexes[0]])
+                tensor_temp = tensor_temp.unsqueeze(0)
+                data_tensor = torch.cat((data_tensor, tensor_temp), dim=0)
+
+        return data_tensor, label_tensor
 
 
 class SentinelTiffDataloaderSubmission(Dataset):

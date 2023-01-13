@@ -21,7 +21,7 @@ from models.utils import loss_functions
 import argparse
 import models.utils.transforms as tf
 from models.utils.dataloading import SentinelTiffDataloader, SentinelTiffDataloaderSubmission, create_tensor, \
-    apply_transforms
+    apply_transforms, SentinelTiffDataloader_all
 import operator
 import sys
 from models.utils.warmup_scheduler.scheduler import GradualWarmupScheduler
@@ -75,25 +75,25 @@ def prepare_dataset_training(args):
 
     training_features_path = args.tiff_training_features_path
 
-    id_month_list = []
-
-    for current_id in chip_ids:
-        for month in range(0, 12):
-
-            if month < 10:
-                month = "0" + str(month)
-
-            month_patch_path = osp.join(training_features_path, f"{current_id}_S2_{month}.tif")
-            if osp.exists(month_patch_path):
-                id_month_list.append((current_id, month))
+    # id_month_list = []
+    #
+    # for current_id in chip_ids:
+    #     for month in range(5, 12):
+    #
+    #         if month < 10:
+    #             month = "0" + str(month)
+    #
+    #         month_patch_path = osp.join(training_features_path, f"{current_id}_S2_{month}.tif")
+    #         if osp.exists(month_patch_path):
+    #             id_month_list.append((current_id, month))
 
     corrupted_transform_method, transform_channels = tf.select_transform_method(args.transform_method,
                                                                                 in_channels=len(
                                                                                     args.bands_to_keep))
 
-    new_dataset = SentinelTiffDataloader(training_features_path,
+    new_dataset = SentinelTiffDataloader_all(training_features_path,
                                          args.tiff_training_labels_path,
-                                         id_month_list,
+                                         chip_ids,
                                          args.bands_to_keep,
                                          corrupted_transform_method)
 
@@ -135,7 +135,7 @@ def select_segmenter(encoder_weights, segmenter_name, encoder_name, number_of_ch
     if segmenter_name == "Unet":
         base_model = smp.Unet(
             encoder_name=encoder_name,
-            in_channels=number_of_channels,
+            in_channels=161,
             classes=1,
             encoder_weights=encoder_weights
         )
@@ -271,11 +271,11 @@ def create_submissions(args):
 
 def set_args():
     data_type = "tiff"  # options are "npy" or "tiff"
-    epochs = 1000
+    epochs = 1500
     warmup_epochs = 20
     learning_rate = 1e-4
     weight_decay = 5e-4
-    dataloader_workers = 4
+    dataloader_workers = 8
     validation_fraction = 0.15
     batch_size = 16
     log_step_frequency = 200
@@ -319,7 +319,8 @@ def set_args():
         23: 'S2-VV/VH-Desc: Cband-10m'
     }
 
-    bands_to_keep = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23]
+    # bands_to_keep = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23]
+    bands_to_keep = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 11, 12, 13, 14]
     band_indicator = ["1" if k in bands_to_keep else "0" for k, v in band_map.items()]
 
     parser = argparse.ArgumentParser()
