@@ -16,16 +16,6 @@ random.seed(0)
 
 warnings.filterwarnings("ignore", category=rasterio.errors.NotGeoreferencedWarning)
 
-def create_tensor_from_bands_list(band_list):
-    band_array = np.asarray(band_list, dtype=np.float32)
-
-    band_tensor = torch.tensor(band_array)
-
-    # normalization happens here
-    # band_tensor = (band_tensor.permute(1, 2, 0) - band_tensor.mean(dim=(1, 2))) / (band_tensor.std(dim=(1, 2)) + 0.01)
-    # band_tensor = band_tensor.permute(2, 0, 1)
-
-    return band_tensor
 
 class SentinelDataLoader(Dataset):
     def __init__(self, args, id_month_list, corrupted_transform_method):
