@@ -131,7 +131,9 @@ def prepare_dataset(args):
 
     in_channels = len(args.bands_to_keep)
     corrupted_transform_method, transform_channels = tf.select_transform_method(
-        args.transform_method, in_channels=in_channels
+        args.transform_method,
+        in_channels=in_channels,
+        image_size=args.image_patch_size,
     )
     # print(len(id_month_list))
     dataset = SentinelDataLoader(args, id_month_list, corrupted_transform_method)

@@ -9,6 +9,7 @@ from torch.utils.data import Dataset
 import torch
 import warnings
 import torch.nn.functional as F
+from models.utils.transforms import ReplaceClouds
 
 warnings.filterwarnings("ignore", category=rasterio.errors.NotGeoreferencedWarning)
 
@@ -186,6 +187,7 @@ def apply_transforms(corrupted_transform_method, bands_to_keep):
             torch.device("cpu"), bands_to_keep
         ),  # DROPS ALL BUT SPECIFIED bands_to_keep
         corrupted_transform_method,  # Applies corrupted band transformation
+        ReplaceClouds(cloud_channel=10),
     )
 
 

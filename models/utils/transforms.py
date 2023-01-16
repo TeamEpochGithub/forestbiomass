@@ -2,7 +2,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 
-from models.utils.check_corrupted import is_corrupted
+from models.utils.check_corrupted import is_corrupted, is_cloud
 
 _EPSILON = 1e-10
 
@@ -134,10 +134,10 @@ class AppendRatioAB(nn.Module):
         return sample
 
 
-def select_transform_method(picked_transform_method, in_channels):
+def select_transform_method(picked_transform_method, in_channels, image_size=256):
     if picked_transform_method == "replace_corrupted_0s":
         # return replace_corrupted_0s, 0
-        return ReplaceCorruptedZeros(), 0
+        return ReplaceCorruptedZeros(image_size), 0
     elif picked_transform_method == "replace_corrupted_noise":
         return ReplaceCorruptedNoise(), 0
     elif picked_transform_method == "add_band_corrupted_arrays":
@@ -161,16 +161,33 @@ class NoTransformation(nn.Module):
 class ReplaceCorruptedZeros(nn.Module):
     """Replace corrupted bands by zeros"""
 
-    def __init__(self) -> None:
+    def __init__(self, image_size=256):
         super().__init__()
+        self.image_size = image_size
 
     def forward(self, inputs):
-        # X = inputs["image"].detach()
+        X = inputs["image"].detach()
+        for b, x in enumerate(X):
+            for ind, band in enumerate(x):
+                if is_corrupted(np.array(band), self.image_size):
+                    X[b, ind] = torch.zeros((self.image_size, self.image_size))
+        inputs["image"] = X
+        return inputs
 
-        # for ind, band in enumerate(X):
-        #     if is_corrupted(np.array(band)):
-        #         X[ind] = torch.zeros((256, 256))
-        # inputs["image"] = X
+
+class ReplaceClouds(nn.Module):
+    """Replace clouds by zeros"""
+
+    def __init__(self, cloud_channel=10):
+        super().__init__()
+        self.cloud_channel = cloud_channel
+
+    def forward(self, inputs):
+        X = inputs["image"].detach()
+        for b, x in enumerate(X):
+            if is_cloud(np.array(x[self.cloud_channel, :, :])):
+                X[b] = torch.zeros(x.shape)
+        inputs["image"] = X
         return inputs
 
 
