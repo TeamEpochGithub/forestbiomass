@@ -52,8 +52,11 @@ class ChainedSegmentationDatasetMaker(Dataset):
             if month_indicator == 0:
                 continue
             feature_tensor = retrieve_tiff(self.training_feature_path, id, str(month_index), self.S1_bands,
-                                           self.S2_bands)
-            # feature_tensor=apply_transforms()(feature_tensor)
+                                           self.S2_bands).to(torch.float16)
+            # print(feature_tensor.shape)
+            sample = {'image': feature_tensor, 'label': label_tensor}
+            feature_tensor = apply_transforms()(sample)
+            feature_tensor = feature_tensor['image']
             tensor_list.append(feature_tensor)
 
         tensor_list = torch.cat(tensor_list, dim=0)
@@ -70,7 +73,8 @@ def apply_transforms():
         indices.AppendNDRE(index_nir=6, index_vre1=3),  # Red Edge Vegetation Index for canopy detection, index 18
         indices.AppendNDSI(index_green=1, index_swir=8),  # Snow Index, index 19
         indices.AppendNDWI(index_green=1, index_nir=6),  # Difference Water Index for water detection, index 20
-        indices.AppendSWI(index_vre1=3, index_swir2=8))
+        indices.AppendSWI(index_vre1=3, index_swir2=8),
+        tf.DropBands(torch.device('cpu'), [0,1,2,3,4,5,6,15,16,18,20]))
 
 def retrieve_tiff(feature_path, id, month, S1_band_selection, S2_band_selection):
     if int(month) < 10:
@@ -140,7 +144,7 @@ def train(args):
             X.append(x.detach().cpu().numpy().reshape(x.shape[1],-1).transpose(1,0))
             Y.append(y.detach().cpu().numpy().reshape(y.shape[1],-1).transpose(1,0))
             c+=1
-            if c==750:
+            if c==400:
                 break
     X=np.array(X)
     X=X.reshape(X.shape[0]*X.shape[1],X.shape[2])
@@ -154,7 +158,7 @@ def train(args):
     print(train_data.head())
     metric = 'mean_absolute_error'
     save_path = 'agModels'  # specifies folder to store trained models
-    predictor = TabularPredictor(label="target", problem_type="regression", path=save_path,eval_metric = metric).fit(X, time_limit=60*60*4, presets='best_quality', holdout_frac=0.05)
+    predictor = TabularPredictor(label="target", problem_type="regression", path=save_path,eval_metric = metric).fit(X, time_limit=60*60*4, presets='best_quality', holdout_frac=0.05,num_cpus=12)
     del X
     del Y
 
@@ -246,14 +250,14 @@ def set_args():
         "B2-Blue": 1,
         "B3-Green": 1,
         "B4-Red": 1,
-        "B5-Veg red edge 1": 0,
-        "B6-Veg red edge 2": 0,
-        "B7-Veg red edge 3": 0,
-        "B8-NIR": 0,
-        "B8A-Narrow NIR": 0,
-        "B11-SWIR 1": 0,
-        "B12-SWIR 2": 0,
-        "Cloud probability": 0,
+        "B5-Veg red edge 1": 1,
+        "B6-Veg red edge 2": 1,
+        "B7-Veg red edge 3": 1,
+        "B8-NIR": 1,
+        "B8A-Narrow NIR": 1,
+        "B11-SWIR 1": 1,
+        "B12-SWIR 2": 1,
+        "Cloud probability": 1,
     }
 
     s1_list = list(sentinel_1_bands.values())
