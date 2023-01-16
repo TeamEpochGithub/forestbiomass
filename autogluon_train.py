@@ -20,6 +20,9 @@ import argparse
 from autogluon.tabular import TabularDataset, TabularPredictor
 from tqdm import tqdm
 import pandas as pd
+from torch import nn
+from torchgeo.transforms import indices
+import models.utils.transforms as tf
 warnings.filterwarnings("ignore", category=rasterio.errors.NotGeoreferencedWarning)
 
 class ChainedSegmentationDatasetMaker(Dataset):
@@ -45,17 +48,55 @@ class ChainedSegmentationDatasetMaker(Dataset):
         label_tensor = torch.tensor(rasterio.open(label_path).read().astype(np.float32))
 
         tensor_list = []
-
         for month_index, month_indicator in enumerate(self.month_selection):
-
+            if month_indicator == 0:
+                continue
             feature_tensor = retrieve_tiff(self.training_feature_path, id, str(month_index), self.S1_bands,
                                            self.S2_bands)
-
+            # feature_tensor=apply_transforms()(feature_tensor)
             tensor_list.append(feature_tensor)
 
         tensor_list = torch.cat(tensor_list, dim=0)
 
         return tensor_list, label_tensor
+
+def apply_transforms():
+    return nn.Sequential(
+        tf.ClampAGBM(vmin=0., vmax=500.),  # exclude AGBM outliers, 500 is good upper limit per AGBM histograms
+        indices.AppendNDVI(index_nir=6, index_red=2),  # NDVI, index 15
+        indices.AppendNormalizedDifferenceIndex(index_a=11, index_b=12),  # (VV-VH)/(VV+VH), index 16
+        indices.AppendNDBI(index_swir=8, index_nir=6),
+        # Difference Built-up Index for development detection, index 17
+        indices.AppendNDRE(index_nir=6, index_vre1=3),  # Red Edge Vegetation Index for canopy detection, index 18
+        indices.AppendNDSI(index_green=1, index_swir=8),  # Snow Index, index 19
+        indices.AppendNDWI(index_green=1, index_nir=6),  # Difference Water Index for water detection, index 20
+        indices.AppendSWI(index_vre1=3, index_swir2=8))
+
+def retrieve_tiff(feature_path, id, month, S1_band_selection, S2_band_selection):
+    if int(month) < 10:
+        month = "0" + month
+
+    channel_count = S1_band_selection.count(1) + S2_band_selection.count(1)
+    S1_path = osp.join(feature_path, f"{id}_S1_{month}.tif")
+    S2_path = osp.join(feature_path, f"{id}_S2_{month}.tif")
+    if S2_band_selection.count(1) >= 1:
+        if not osp.exists(S2_path):
+            return create_tensor_from_bands_list(
+                np.zeros((channel_count, 256, 256), dtype=np.float32)
+            )
+
+    bands = []
+    if S1_band_selection.count(1) >= 1:
+        S1_bands = rasterio.open(S1_path).read().astype(np.float32)
+        S1_bands = [x for x, y in zip(S1_bands, S1_band_selection) if y == 1]
+        bands.extend(S1_bands)
+
+    if S2_band_selection.count(1) >= 1:
+        S2_bands = rasterio.open(S2_path).read().astype(np.float32)
+        S2_bands = [x for x, y in zip(S2_bands, S2_band_selection) if y == 1]
+        bands.extend(S2_bands)
+    feature_tensor = create_tensor_from_bands_list(bands)
+    return feature_tensor
 
 def prepare_dataset_training(args):
     with open(args.training_ids_path, newline='') as f:
@@ -91,25 +132,29 @@ def train(args):
     X=[]
     Y=[]
     c=0
-    for (x, y) in tqdm(train_dataloader):
-        X.append(x.detach().cpu().numpy().reshape(x.shape[1],-1).transpose(1,0))
-        Y.append(y.detach().cpu().numpy().reshape(y.shape[1],-1).transpose(1,0))
-        c+=1
-        if c==100:
-            break
+    with open("train.csv", 'a') as f:
+        for (x, y) in tqdm(train_dataloader):
+            # row=np.concatenate([x.detach().cpu().numpy().reshape(x.shape[1],-1).transpose(1,0),y.detach().cpu().numpy().reshape(y.shape[1],-1).transpose(1,0)], axis=1)
+            # print(row.shape)
+            # np.savetxt(f,row)
+            X.append(x.detach().cpu().numpy().reshape(x.shape[1],-1).transpose(1,0))
+            Y.append(y.detach().cpu().numpy().reshape(y.shape[1],-1).transpose(1,0))
+            c+=1
+            if c==750:
+                break
     X=np.array(X)
     X=X.reshape(X.shape[0]*X.shape[1],X.shape[2])
+    print(X.shape)
     Y=np.array(Y)
     Y=Y.reshape(Y.shape[0]*Y.shape[1],Y.shape[2])
     X = pd.DataFrame(X)
     X["target"]=Y
-    print(X.shape)
     subsample_size = 20  # subsample subset of data for faster demo, try setting this to much larger values
     train_data = X.sample(n=subsample_size, random_state=0)
     print(train_data.head())
     metric = 'mean_absolute_error'
     save_path = 'agModels'  # specifies folder to store trained models
-    predictor = TabularPredictor(label="target", problem_type="regression", path=save_path,eval_metric = metric).fit(train_data)
+    predictor = TabularPredictor(label="target", problem_type="regression", path=save_path,eval_metric = metric).fit(X, time_limit=60*60*4, presets='best_quality', holdout_frac=0.05)
     del X
     del Y
 
@@ -117,12 +162,16 @@ def train(args):
     test_data_nolab=[]
     label=[]
     c=0
-    for (x, y) in tqdm(valid_dataloader):
-        test_data_nolab.append(x.detach().cpu().numpy().reshape(x.shape[1],-1).transpose(1,0))
-        label.append(y.detach().cpu().numpy().reshape(y.shape[1],-1).transpose(1,0))
-        c+=1
-        if c==50:
-            break
+    with open("val.csv", 'a') as f:
+        for (x, y) in tqdm(valid_dataloader):
+            # row=np.concatenate([x.detach().cpu().numpy().reshape(x.shape[1],-1).transpose(1,0),y.detach().cpu().numpy().reshape(y.shape[1],-1).transpose(1,0)], axis=1)
+            # print(row.shape)
+            # np.savetxt(f,row)
+            test_data_nolab.append(x.detach().cpu().numpy().reshape(x.shape[1],-1).transpose(1,0))
+            label.append(y.detach().cpu().numpy().reshape(y.shape[1],-1).transpose(1,0))
+            c+=1
+            if c==100:
+                break
     test_data_nolab=np.array(test_data_nolab)
     test_data_nolab=test_data_nolab.reshape(test_data_nolab.shape[0]*test_data_nolab.shape[1],test_data_nolab.shape[2])
     label=np.array(label)
@@ -134,33 +183,6 @@ def train(args):
     print("Predictions:  \n", y_pred)
     perf = predictor.evaluate_predictions(y_true=test_data["target"], y_pred=y_pred, auxiliary_metrics=True)
     predictor.leaderboard(test_data, silent=True)
-
-
-def retrieve_tiff(feature_path, id, month, S1_band_selection, S2_band_selection):
-    if int(month) < 10:
-        month = "0" + month
-
-    channel_count = S1_band_selection.count(1) + S2_band_selection.count(1)
-    S1_path = osp.join(feature_path, f"{id}_S1_{month}.tif")
-    S2_path = osp.join(feature_path, f"{id}_S2_{month}.tif")
-    if S2_band_selection.count(1) >= 1:
-        if not osp.exists(S2_path):
-            return create_tensor_from_bands_list(
-                np.zeros((channel_count, 256, 256), dtype=np.float32)
-            )
-
-    bands = []
-    if S1_band_selection.count(1) >= 1:
-        S1_bands = rasterio.open(S1_path).read().astype(np.float32)
-        S1_bands = [x for x, y in zip(S1_bands, S1_band_selection) if y == 1]
-        bands.extend(S1_bands)
-
-    if S2_band_selection.count(1) >= 1:
-        S2_bands = rasterio.open(S2_path).read().astype(np.float32)
-        S2_bands = [x for x, y in zip(S2_bands, S2_band_selection) if y == 1]
-        bands.extend(S2_bands)
-    feature_tensor = create_tensor_from_bands_list(bands)
-    return feature_tensor
 
 def create_tensor_from_bands_list(band_list):
     band_array = np.asarray(band_list, dtype=np.float32)
@@ -195,10 +217,10 @@ def set_args():
     missing_month_repair_mode = "zeros"
 
     month_selection = {
-        "September": 1,
-        "October": 1,
-        "November": 1,
-        "December": 1,
+        "September": 0,
+        "October": 0,
+        "November": 0,
+        "December": 0,
         "January": 1,
         "February": 1,
         "March": 1,
@@ -224,13 +246,13 @@ def set_args():
         "B2-Blue": 1,
         "B3-Green": 1,
         "B4-Red": 1,
-        "B5-Veg red edge 1": 1,
-        "B6-Veg red edge 2": 1,
-        "B7-Veg red edge 3": 1,
-        "B8-NIR": 1,
-        "B8A-Narrow NIR": 1,
-        "B11-SWIR 1": 1,
-        "B12-SWIR 2": 1,
+        "B5-Veg red edge 1": 0,
+        "B6-Veg red edge 2": 0,
+        "B7-Veg red edge 3": 0,
+        "B8-NIR": 0,
+        "B8A-Narrow NIR": 0,
+        "B11-SWIR 1": 0,
+        "B12-SWIR 2": 0,
         "Cloud probability": 0,
     }
 

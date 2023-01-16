@@ -1,7 +1,6 @@
 import rasterio
 from torch import nn
 from torchgeo.transforms import indices
-
 import models.utils.transforms as tf
 import numpy as np
 import os.path as osp
@@ -138,6 +137,8 @@ class SentinelTiffDataloader(Dataset):
 
         selected_tensor = apply_transforms(bands_to_keep=self.bands_to_keep,
                                            corrupted_transform_method=self.corrupted_transform_method)(sample)
+        print(feature_tensor.shape)                                    
+        print(selected_tensor['image'].shape)
 
 
         #return feature_tensor, label_tensor
