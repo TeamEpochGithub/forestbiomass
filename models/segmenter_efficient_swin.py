@@ -185,8 +185,7 @@ def load_model(args):
     latest_checkpoint_name = list(os.scandir(checkpoint_dir_path))[-1]
     latest_checkpoint_path = osp.join(checkpoint_dir_path, latest_checkpoint_name)
 
-    base_model = select_segmenter(args.encoder_weights, args.segmenter_name, args.encoder_name,
-                                  len(args.bands_to_keep) + args.extra_channels)
+    base_model = Efficient_Swin()
 
     # This block might be redundant if we can download weights via the python segmentation models library.
     # However, it might be that not all weights are available this way.
@@ -205,7 +204,7 @@ def load_model(args):
 
     ###########################################################
 
-    model = Sentinel2Model(model=base_model, epochs=args.epochs, warmup_epochs=args.warmup_epochs, learning_rate=args.learning_rate, weight_decay=args.weight_decay, loss_function=args.loss_function)
+    model = Sentinel2Model(model=base_model, epochs=args.epochs, warmup_epochs=args.warmup_epochs, learning_rate=args.learning_rate, weight_decay=args.weight_decay, loss_function=args.train_loss_function)
 
     checkpoint = torch.load(str(latest_checkpoint_path))
     model.load_state_dict(checkpoint["state_dict"])
@@ -302,7 +301,7 @@ def set_args():
 
     parser.add_argument('--model_identifier', default=model_identifier, type=str)
     # parser.add_argument('--segmenter_name', default=model_segmenter, type=str)
-    # parser.add_argument('--encoder_name', default=model_encoder, type=str)
+    parser.add_argument('--encoder_name', default="eff_swin_v2", type=str)
     # parser.add_argument('--encoder_weights', default=model_encoder_weights, type=str)
     parser.add_argument('--model_version', default=version, type=int)
     parser.add_argument('--data_type', default=data_type, type=str)
@@ -344,7 +343,7 @@ def set_args():
 
 if __name__ == '__main__':
     args = set_args()
-    _, score = train(args)
+    # _, score = train(args)
     # print(score)
 
-    # create_submissions(args)
+    create_submissions(args)
