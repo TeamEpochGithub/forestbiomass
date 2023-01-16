@@ -1,13 +1,7 @@
-import itertools
-import operator
-import sys
-
 import torch
 from PIL import Image
 from pytorch_lightning.strategies import DDPStrategy
-import numpy
 from torch.utils.data import Dataset, DataLoader
-from torch import distributed as dist
 import segmentation_models_pytorch as smp
 import os
 import rasterio
@@ -23,11 +17,11 @@ from tqdm import tqdm
 import models
 import data
 import csv
-import argparse
 from models.utils import loss_functions
 import argparse
 import models.utils.transforms as tf
-from models.utils.dataloading import SegmentationDatasetMaker, SegmentationDatasetMakerTIFF, create_tensor, SubmissionDataLoader, apply_transforms
+from models.utils.dataloading import SentinelTiffDataloader, SentinelTiffDataloaderSubmission, create_tensor, \
+    apply_transforms
 import operator
 import sys
 
@@ -37,23 +31,24 @@ warnings.filterwarnings("ignore", category=rasterio.errors.NotGeoreferencedWarni
 
 
 class Segmenter(pl.LightningModule):
-    def __init__(self, model, learning_rate, loss_function):
+    def __init__(self, model, args):
         super().__init__()
         self.model = model
-        self.learning_rate = learning_rate
-        self.loss_function = loss_function
+        self.learning_rate = args.learning_rate
+        self.train_loss_function = args.train_loss_function
+        self.val_loss_function = args.val_loss_function
 
     def training_step(self, batch, batch_idx):
         x, y = batch
         y_hat = self.model(x)
-        loss = self.loss_function(y_hat, y)
+        loss = self.train_loss_function(y_hat, y)
         self.log("train/loss", loss)
         return loss
 
     def validation_step(self, batch, batch_idx):
         x, y = batch
         y_hat = self.model(x)
-        loss = self.loss_function(y_hat, y)
+        loss = self.val_loss_function(y_hat, y)
         self.log("val/loss", loss)
         return loss
 
@@ -64,44 +59,68 @@ class Segmenter(pl.LightningModule):
         return self.model(x)
 
 
-def prepare_dataset(args):
-    with open(args.training_ids_path, newline='\n') as f:
+def prepare_dataset_training(args):
+    with open(args.training_ids_path, newline='') as f:
         reader = csv.reader(f)
         patch_name_data = list(reader)
     chip_ids = patch_name_data[0]
 
-    id_month_list = []
-    for id in chip_ids:
-        for month in range(0, 12):
-            month_patch_path = osp.join(args.training_features_path, id, str(month))
-            if osp.exists(osp.join(month_patch_path, "S2")):
-                id_month_list.append((id, str(month)))
-
-    in_channels = len(args.bands_to_keep)
-    corrupted_transform_method, transform_channels = tf.select_transform_method(args.transform_method,
-                                                                                in_channels=in_channels)
-
-    dataset = SegmentationDatasetMaker(args, id_month_list, corrupted_transform_method)
-    return dataset, (in_channels + transform_channels)
-
-
-def prepare_dataset_tiff(training_ids_path, training_features_path, training_labels_path, S1_band_selection, S2_band_selection):
-    with open(training_ids_path, newline='') as f:
-        reader = csv.reader(f)
-        patch_name_data = list(reader)
-    chip_ids = patch_name_data[0]
+    training_features_path = args.tiff_training_features_path
 
     id_month_list = []
-    for id in chip_ids:
+
+    for current_id in chip_ids:
         for month in range(0, 12):
 
-            month_patch_path = osp.join(training_features_path, f"{id}_S2_{month:02}.tif")
+            if month < 10:
+                month = "0" + str(month)
+
+            month_patch_path = osp.join(training_features_path, f"{current_id}_S2_{month}.tif")
             if osp.exists(month_patch_path):
-                id_month_list.append((id, str(month)))
+                id_month_list.append((current_id, month))
 
-    new_dataset = SegmentationDatasetMakerTIFF(training_features_path, training_labels_path, id_month_list, S1_band_selection,
-                                               S2_band_selection)
-    return new_dataset, (S1_band_selection.count(1) + S2_band_selection.count(1))
+    corrupted_transform_method, transform_channels = tf.select_transform_method(args.transform_method,
+                                                                                in_channels=len(
+                                                                                    args.bands_to_keep))
+
+    new_dataset = SentinelTiffDataloader(training_features_path,
+                                         args.tiff_training_labels_path,
+                                         id_month_list,
+                                         args.bands_to_keep,
+                                         corrupted_transform_method)
+
+    return new_dataset
+
+
+def prepare_dataset_testing(args) -> Dataset:
+    with open(args.testing_ids_path, newline='') as f:
+        reader = csv.reader(f)
+        patch_name_data = list(reader)
+    chip_ids = patch_name_data[0]
+
+    testing_features_path = args.tiff_testing_features_path
+
+    id_month_list = []
+
+    for current_id in chip_ids:
+        for month in range(0, 12):
+
+            if month < 10:
+                month = "0" + str(month)
+
+            month_patch_path = osp.join(testing_features_path, f"{current_id}_S2_{month}.tif")
+            if osp.exists(month_patch_path):
+                id_month_list.append((current_id, month))
+
+    corrupted_transform_method, transform_channels = tf.select_transform_method(args.transform_method,
+                                                                                in_channels=len(
+                                                                                    args.bands_to_keep))
+
+    new_dataset = SentinelTiffDataloaderSubmission(testing_features_path,
+                                                   id_month_list,
+                                                   args.bands_to_keep,
+                                                   corrupted_transform_method)
+    return new_dataset, id_month_list
 
 
 def select_segmenter(encoder_weights, segmenter_name, encoder_name, number_of_channels):
@@ -119,18 +138,6 @@ def select_segmenter(encoder_weights, segmenter_name, encoder_name, number_of_ch
     return base_model
 
 
-def create_tensor_from_bands_list(band_list):
-    band_array = np.asarray(band_list, dtype=np.float32)
-
-    band_tensor = torch.tensor(band_array)
-
-    # normalization happens here
-    band_tensor = (band_tensor.permute(1, 2, 0) - band_tensor.mean(dim=(1, 2))) / (band_tensor.std(dim=(1, 2)) + 0.01)
-    band_tensor = band_tensor.permute(2, 0, 1)
-
-    return band_tensor
-
-
 def train(args):
     print('=' * 30)
     for arg in vars(args):
@@ -139,7 +146,7 @@ def train(args):
 
     print("Getting train data...")
 
-    train_dataset, number_of_channels = prepare_dataset(args)
+    train_dataset = prepare_dataset_training(args)
 
     train_size = int((1 - args.validation_fraction) * len(train_dataset))
     valid_size = len(train_dataset) - train_size
@@ -151,9 +158,9 @@ def train(args):
     valid_dataloader = DataLoader(val_set, batch_size=args.batch_size, shuffle=False,
                                   num_workers=args.dataloader_workers)
 
-    base_model = select_segmenter(args.encoder_weights, args.segmenter_name, args.encoder_name, number_of_channels)
+    base_model = select_segmenter(args.encoder_weights, args.segmenter_name, args.encoder_name, len(args.bands_to_keep))
 
-    model = Segmenter(model=base_model, learning_rate=args.learning_rate, loss_function=args.loss_function)
+    model = Segmenter(base_model, args)
 
     logger = TensorBoardLogger("tb_logs", name=args.model_identifier)
 
@@ -169,7 +176,7 @@ def train(args):
         logger=[logger],
         log_every_n_steps=args.log_step_frequency,
         callbacks=[checkpoint_callback],
-        # num_sanity_val_steps=0,
+        num_sanity_val_steps=0,
         accelerator='gpu',
         devices=2,
         # num_nodes=4,
@@ -196,7 +203,7 @@ def load_model(args):
     base_model = select_segmenter(args.encoder_weights, args.segmenter_name, args.encoder_name,
                                   len(args.bands_to_keep) + args.extra_channels)
 
-    model = Segmenter(model=base_model, learning_rate=args.learning_rate, loss_function=args.loss_function)
+    model = Segmenter(model=base_model, args=args)
 
     checkpoint = torch.load(str(latest_checkpoint_path))
     model.load_state_dict(checkpoint["state_dict"])
@@ -205,144 +212,14 @@ def load_model(args):
     return model
 
 
-def create_predictions(args):
-    model = load_model(args)
-    test_data_path = args.testing_features_path
-
-    with open(args.testing_ids_path, newline='') as f:
-        reader = csv.reader(f)
-        patch_name_data = list(reader)
-    patch_names = patch_name_data[0]
-
-    predictions = []
-    for index, id in enumerate(patch_names):
-
-        all_months = []
-        for month in range(0, 12):
-            s1_folder_path = osp.join(test_data_path, id, f"{month:02}", "S1")
-            s2_folder_path = osp.join(test_data_path, id, f"{month:02}", "S2")
-
-            if osp.exists(s2_folder_path):
-                all_bands = []
-                for s1_index in range(0, 4):
-                    if args.S1_band_selection[s1_index] == 1:
-                        band = np.load(osp.join(s1_folder_path, f"{s1_index}.npy"), allow_pickle=True)
-                        all_bands.append(band)
-
-                for s2_index in range(0, 10):
-                    if args.S2_band_selection[s2_index] == 1:
-                        band = np.load(osp.join(s2_folder_path, f"{s2_index}.npy"), allow_pickle=True)
-                        all_bands.append(band)
-
-                input_tensor = create_tensor(all_bands)
-                pred = model(input_tensor.unsqueeze(0))
-                pred = pred.cpu().squeeze().detach().numpy()
-                all_months.append(pred)
-
-        count = len(all_months)
-        prediction = np.asarray(sum(all_months) / count)
-        predictions.append(prediction)
-
-        total = len(patch_names)
-        if index % 100 == 0:
-            print(f"{index} / {total}")
-
-    return predictions
-
-
 def create_submissions(args):
-    model = load_model(args)
-    test_data_path = args.converted_testing_features_path
 
-    with open(args.testing_ids_path, newline='') as f:
-        reader = csv.reader(f)
-        patch_name_data = list(reader)
-    patch_names = patch_name_data[0]
-
-    predictions = []
-    for index, id in tqdm(enumerate(patch_names)):
-
-        all_months = []
-        for month in range(0, 12):
-
-            s1_folder_path = osp.join(test_data_path, id, f"{month:02}", "S1")
-            s2_folder_path = osp.join(test_data_path, id, f"{month:02}", "S2")
-
-            if osp.exists(s2_folder_path):
-                all_list = []
-
-                for s1_index in range(11):
-                    band = np.load(osp.join(s2_folder_path, f"{s1_index}.npy"),
-                                   allow_pickle=True)
-                    all_list.append(band)
-
-                for s2_index in range(4):
-                    band = np.load(osp.join(s1_folder_path, f"{s2_index}.npy"),
-                                   allow_pickle=True)
-                    all_list.append(band)
-
-                all_tensor = create_tensor(all_list)
-                label_tensor = torch.rand((256, 256))
-
-                sample = {'image': all_tensor, 'label': label_tensor}  # 'image' and 'label' are used by torchgeo
-
-                corrupted_transform_method, transform_channels = tf.select_transform_method(args.transform_method,
-                                                                                            in_channels=len(args.bands_to_keep))
-
-                selected_tensor = apply_transforms(bands_to_keep=args.bands_to_keep,
-                                                   corrupted_transform_method=corrupted_transform_method)(sample)
-
-                selected_tensor = selected_tensor['image']
-                pred = model(selected_tensor.unsqueeze(0))
-                pred = pred.cpu().squeeze().detach().numpy()
-                all_months.append(pred)
-
-        count = len(all_months)
-
-        if count == 0:
-            continue
-
-        agbm_arr = np.asarray(sum(all_months) / count)
-
-        test_agbm_path = osp.join(args.submission_folder_path, f"{id}_agbm.tif")
-        im = Image.fromarray(agbm_arr)
-        im.save(test_agbm_path)
-
-        total = len(patch_names)
-
-        if index % 100 == 0:
-            print(f"{index} / {total}")
-
-    return predictions
-
-
-def experimental_submission(args):
     model = load_model(args)
 
-    with open(args.testing_ids_path, newline='') as f:
-        reader = csv.reader(f)
-        patch_name_data = list(reader)
-    chip_ids = patch_name_data[0]
-
-    id_month_list = []
-
-    if args.data_type == "npy":
-
-        for id in chip_ids:
-            for month in range(0, 12):
-                month_patch_path = osp.join(args.converted_testing_features_path, id, str(month))
-                if osp.exists(osp.join(month_patch_path, "S2")):
-                    id_month_list.append((id, str(month)))
-
-        corrupted_transform_method, transform_channels = tf.select_transform_method(args.transform_method,
-                                                                                    in_channels=len(args.bands_to_keep))
-        new_dataset = SubmissionDataLoader(args,
-                                           id_month_list,
-                                           corrupted_transform_method)
-    else:
-        sys.exit("Error: Invalid data type selected.")
+    new_dataset, id_month_list = prepare_dataset_testing(args)
 
     trainer = Trainer(accelerator="gpu", devices=1)
+
     dl = DataLoader(new_dataset, num_workers=18)
 
     predictions = trainer.predict(model, dataloaders=dl)
@@ -371,17 +248,18 @@ def set_args():
     model_segmenter = "Unet"
     model_encoder = "efficientnet-b2"
     model_encoder_weights = "imagenet"  # Leave None if not using weights.
-    data_type = "npy"  # options are "npy" or "tiff"
-    epochs = 40
+    data_type = "tiff"  # options are "npy" or "tiff"
+    epochs = 20
     learning_rate = 1e-4
-    dataloader_workers = 18
+    dataloader_workers = 12
     validation_fraction = 0.2
-    batch_size = 2
-    log_step_frequency = 10
+    batch_size = 8
+    log_step_frequency = 200
     version = -1  # Keep -1 if loading the latest model version.
     save_top_k_checkpoints = 3
     transform_method = "replace_corrupted_0s"  # "replace_corrupted_noise"  # nothing  # add_band_corrupted_arrays
-    loss_function = loss_functions.rmse_loss
+    train_loss_function = loss_functions.rmse_loss
+    val_loss_function = loss_functions.rmse_loss
 
     # WARNING: Only increment extra_channels when making predictions/submission (based on the transform method used)
     # it is automatically incremented during training based on the transform method used (extra channels generated)
@@ -417,7 +295,7 @@ def set_args():
         23: 'S2-VV/VH-Desc: Cband-10m'
     }
 
-    bands_to_keep = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 15, 16, 17, 18, 19, 20, 21]
+    bands_to_keep = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23]
     band_indicator = ["1" if k in bands_to_keep else "0" for k, v in band_map.items()]
 
     parser = argparse.ArgumentParser()
@@ -433,17 +311,15 @@ def set_args():
 
     data_path = osp.dirname(data.__file__)
     models_path = osp.dirname(models.__file__)
-    parser.add_argument('--converted_training_features_path', default=str(osp.join(data_path, "converted")), type=str)
-    parser.add_argument('--converted_testing_features_path', default=str(osp.join(data_path, "testing_converted")), type=str)
 
     parser.add_argument('--tiff_training_features_path', default=str(osp.join(data_path, "imgs", "train_features")))
     parser.add_argument('--tiff_training_labels_path', default=str(osp.join(data_path, "imgs", "train_agbm")))
     parser.add_argument('--tiff_testing_features_path', default=str(osp.join(data_path, "imgs", "test_features")))
 
     parser.add_argument('--training_ids_path', default=str(osp.join(data_path, "patch_names")), type=str)
-    parser.add_argument('--testing_features_path', default=str(osp.join(data_path, "testing_converted")), type=str)
     parser.add_argument('--testing_ids_path', default=str(osp.join(data_path, "test_patch_names")), type=str)
-    parser.add_argument('--current_model_path', default=str(osp.join(models_path, "tb_logs", model_identifier)), type=str)
+    parser.add_argument('--current_model_path', default=str(osp.join(models_path, "tb_logs", model_identifier)),
+                        type=str)
     parser.add_argument('--submission_folder_path', default=str(osp.join(data_path, "imgs", "test_agbm")), type=str)
 
     parser.add_argument('--dataloader_workers', default=dataloader_workers, type=int)
@@ -455,23 +331,17 @@ def set_args():
     parser.add_argument('--save_top_k_checkpoints', default=save_top_k_checkpoints, type=int)
 
     parser.add_argument('--bands_to_keep', default=bands_to_keep, type=list)
-    parser.add_argument('--loss_function', default=loss_function)
+    parser.add_argument('--train_loss_function', default=train_loss_function)
+    parser.add_argument('--val_loss_function', default=val_loss_function)
     parser.add_argument('--transform_method', default=transform_method, type=str)
     parser.add_argument('--extra_channels', default=extra_channels, type=int)
 
     args = parser.parse_args()
-
-    print('=' * 30)
-    for arg in vars(args):
-        print('--', arg, ':', getattr(args, arg))
-    print('=' * 30)
 
     return args
 
 
 if __name__ == '__main__':
     args = set_args()
-    # _, score = train(args)
-    # print(score)
-
+    _, score = train(args)
     create_submissions(args)
