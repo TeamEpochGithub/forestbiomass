@@ -21,7 +21,7 @@ from models.utils import loss_functions
 import argparse
 import models.utils.transforms as tf
 from models.utils.dataloading import SentinelTiffDataloader, SentinelTiffDataloaderSubmission, create_tensor, \
-    apply_transforms, SentinelTiffDataloader_all
+    apply_transforms, SentinelTiffDataloader_all, SentinelTiffDataloader_all_submission
 import operator
 import sys
 from models.utils.warmup_scheduler.scheduler import GradualWarmupScheduler
@@ -100,12 +100,11 @@ def prepare_dataset_training(args):
     return new_dataset
 
 
-def prepare_dataset_testing(args) -> Dataset:
+def prepare_dataset_testing(args):
     with open(args.testing_ids_path, newline='') as f:
         reader = csv.reader(f)
         patch_name_data = list(reader)
     chip_ids = patch_name_data[0]
-
     testing_features_path = args.tiff_testing_features_path
 
     id_month_list = []
@@ -124,8 +123,8 @@ def prepare_dataset_testing(args) -> Dataset:
                                                                                 in_channels=len(
                                                                                     args.bands_to_keep))
 
-    new_dataset = SentinelTiffDataloaderSubmission(testing_features_path,
-                                                   id_month_list,
+    new_dataset = SentinelTiffDataloader_all_submission(testing_features_path,
+                                                   chip_ids,
                                                    args.bands_to_keep,
                                                    corrupted_transform_method)
     return new_dataset, id_month_list
@@ -209,8 +208,7 @@ def load_model(args):
     latest_checkpoint_name = list(os.scandir(checkpoint_dir_path))[-1]
     latest_checkpoint_path = osp.join(checkpoint_dir_path, latest_checkpoint_name)
 
-    base_model = select_segmenter(args.encoder_weights, args.segmenter_name, args.encoder_name,
-                                  len(args.bands_to_keep) + args.extra_channels)
+    base_model = Efficient_Swin()
 
     # This block might be redundant if we can download weights via the python segmentation models library.
     # However, it might be that not all weights are available this way.
@@ -229,7 +227,7 @@ def load_model(args):
 
     ###########################################################
 
-    model = Sentinel2Model(model=base_model, epochs=args.epochs, warmup_epochs=args.warmup_epochs, learning_rate=args.learning_rate, weight_decay=args.weight_decay, loss_function=args.loss_function)
+    model = Sentinel2Model(model=base_model, epochs=args.epochs, warmup_epochs=args.warmup_epochs, learning_rate=args.learning_rate, weight_decay=args.weight_decay, loss_function=args.train_loss_function)
 
     checkpoint = torch.load(str(latest_checkpoint_path))
     model.load_state_dict(checkpoint["state_dict"])
@@ -246,18 +244,21 @@ def create_submissions(args):
 
     trainer = Trainer(accelerator="gpu", devices=1)
 
-    dl = DataLoader(new_dataset, num_workers=18)
+    dl = DataLoader(new_dataset, num_workers=14)
 
     predictions = trainer.predict(model, dataloaders=dl)
     tensor_id_list = [i[0] for i in id_month_list]
-
+    print("tensoridlist:" ,len(tensor_id_list))
     transformed_predictions = [x.cpu().squeeze().detach().numpy() for x in predictions]
+    print("transformedpred", len(transformed_predictions))
     linked_tensor_list = list(zip(tensor_id_list, transformed_predictions))
-    linked_tensor_list = sorted(linked_tensor_list, key=operator.itemgetter(0))
-
-    averaged_tensor_list = list(accumulate_predictions(linked_tensor_list))
-
-    for id_tensor_pair in averaged_tensor_list:
+    print("linkedtensorlist",len(linked_tensor_list))
+    # linked_tensor_list = sorted(linked_tensor_list, key=operator.itemgetter(0))
+    # print("linkedtensorlist2",len(linked_tensor_list))
+    # averaged_tensor_list = list(accumulate_predictions(linked_tensor_list))
+    # # print("avgtensorlist",len(averaged_tensor_list))
+    count=0
+    for id_tensor_pair in linked_tensor_list:
         current_id = id_tensor_pair[0]
         current_tensor = id_tensor_pair[1]
 
@@ -265,6 +266,8 @@ def create_submissions(args):
 
         im = Image.fromarray(current_tensor)
         im.save(agbm_path)
+        count += 1
+        print(count)
 
     print("Finished creating submission.")
 
@@ -329,7 +332,7 @@ def set_args():
 
     parser.add_argument('--model_identifier', default=model_identifier, type=str)
     # parser.add_argument('--segmenter_name', default=model_segmenter, type=str)
-    # parser.add_argument('--encoder_name', default=model_encoder, type=str)
+    parser.add_argument('--encoder_name', default="efficient_swin", type=str)
     # parser.add_argument('--encoder_weights', default=model_encoder_weights, type=str)
     parser.add_argument('--model_version', default=version, type=int)
     parser.add_argument('--data_type', default=data_type, type=str)
@@ -371,7 +374,7 @@ def set_args():
 
 if __name__ == '__main__':
     args = set_args()
-    _, score = train(args)
+    # _, score = train(args)
     # print(score)
 
-    # create_submissions(args)
+    create_submissions(args)

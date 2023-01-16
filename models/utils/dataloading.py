@@ -1,4 +1,5 @@
 import random
+import sys
 
 import rasterio
 from torch import nn
@@ -183,7 +184,60 @@ class SentinelTiffDataloader_all(Dataset):
                 tensor_temp = tensor_temp.unsqueeze(0)
                 data_tensor = torch.cat((data_tensor, tensor_temp), dim=0)
 
+            #=============to do=================
+
+            # flip horiaon vertical
+            # frid
+
+
         return data_tensor, label_tensor
+
+class SentinelTiffDataloader_all_submission(Dataset):
+    def __init__(self, training_feature_path, chip_ids, bands_to_keep, corrupted_transform_method):
+        self.training_feature_path = training_feature_path
+        self.chip_ids = chip_ids
+        self.bands_to_keep = bands_to_keep
+        self.corrupted_transform_method = corrupted_transform_method
+
+    def __len__(self):
+        return len(self.chip_ids)
+
+    def __getitem__(self, idx):
+        times = 0
+        current_id = self.chip_ids[idx]
+
+
+        for month in range(5, 12):
+
+            if month < 10:
+                month = "0" + str(month)
+
+            month_patch_path = osp.join(self.training_feature_path, f"{current_id}_S2_{month}.tif")
+
+            if osp.exists(month_patch_path):
+                feature_tensor = retrieve_tiff(self.training_feature_path, current_id, month)
+                sample = {'image': feature_tensor}
+                selected_tensor = apply_transforms_testing(bands_to_keep=self.bands_to_keep,
+                                                   corrupted_transform_method=self.corrupted_transform_method)(sample)
+                if times == 0:
+                    data_tensor = selected_tensor['image']
+                else:
+                    data_tensor = torch.cat((data_tensor, selected_tensor['image']), dim=0)
+                times+=1
+
+        if data_tensor.shape[0] <161:
+            indexes = list(range(data_tensor.shape[0]))
+            for i in range(161-data_tensor.shape[0]):
+                random.shuffle(indexes)
+                tensor_temp = copy.deepcopy(data_tensor[indexes[0]])
+                tensor_temp = tensor_temp.unsqueeze(0)
+                data_tensor = torch.cat((data_tensor, tensor_temp), dim=0)
+
+            #=============to do=================
+
+            # flip horiaon vertical
+            # frid
+        return data_tensor
 
 
 class SentinelTiffDataloaderSubmission(Dataset):
@@ -209,7 +263,7 @@ class SentinelTiffDataloaderSubmission(Dataset):
         return selected_tensor['image']
 
 
-def retrieve_tiff(feature_path, id, month):
+def retrieve_tiff(feature_path, id, month)->torch.Tensor:
 
     S1_path = osp.join(feature_path, f"{id}_S1_{month}.tif")
     S2_path = osp.join(feature_path, f"{id}_S2_{month}.tif")
