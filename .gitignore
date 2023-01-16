@@ -6,6 +6,8 @@ data/forest-biomass
 data/forest-biomass-test
 models/vit_checkpoints
 models/tb_logs
+agModels/**
+.conda/**
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
