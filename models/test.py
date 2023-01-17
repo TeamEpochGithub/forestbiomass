@@ -1,4 +1,3 @@
-
 import torch
 
 def print_cuda_count():
