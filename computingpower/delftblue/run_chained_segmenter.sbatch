@@ -5,13 +5,14 @@
 #SBATCH --partition=gpu
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=48
-#SBATCH --gpus-per-task=1
+#SBATCH --gpus-per-task=4
 #SBATCH --mem-per-cpu=2G
 #SBATCH --account=research-eemcs-insy
 
-module load 2022r2 miniconda3
+module load 2022r2 miniconda3 py-pip/21.1.2
 unset CONDA_SHLVL
 source "$(conda info --base)/etc/profile.d/conda.sh"
+export PYTHONPATH='/home/${USER}/forestbiomass'
 
 ### ==============COMMENT OUT AFTER FIRST RUN==============
 #conda create -n forest python=3.8.12
@@ -20,9 +21,9 @@ source "$(conda info --base)/etc/profile.d/conda.sh"
 conda activate forest
 
 ### ==============COMMENT OUT AFTER FIRST RUN==============
-conda install pytorch==1.10.0 torchvision==0.11.0 torchaudio==0.10.0 cudatoolkit=10.2 -c pytorch
-conda install -c default rasterio segmentation-models-pytorch pytorch-lightning torchgeo pillow gdal poppler
+#conda install pytorch torchvision torchaudio pytorch-cuda=11.6 -c pytorch -c nvidia
+#conda install -c default rasterio segmentation-models-pytorch pytorch-lightning torchgeo pillow gdal poppler
 ### =======================================================
 
-srun python ../../models/chained_segmenter_tiff.py
+srun python ../../segmenter/chained_segmenter_tiff.py
 conda deactivate

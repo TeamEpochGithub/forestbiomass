@@ -302,7 +302,7 @@ def train(args):
     trainer = Trainer(
         accelerator="gpu",
         devices=4,
-        stategy='dp',
+        strategy='dp',
         max_epochs=args.epochs,
         logger=[logger],
         log_every_n_steps=args.log_step_frequency,
