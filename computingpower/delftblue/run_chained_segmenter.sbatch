@@ -20,8 +20,8 @@ source "$(conda info --base)/etc/profile.d/conda.sh"
 conda activate forest
 
 ### ==============COMMENT OUT AFTER FIRST RUN==============
-#conda install pytorch==1.10.0 torchvision==0.11.0 torchaudio==0.10.0 cudatoolkit=10.2 -c pytorch
-#conda install -c conda-forge rasterio segmentation-models-pytorch pytorch-lightning torchgeo pillow
+conda install pytorch==1.10.0 torchvision==0.11.0 torchaudio==0.10.0 cudatoolkit=10.2 -c pytorch
+conda install -c default rasterio segmentation-models-pytorch pytorch-lightning torchgeo pillow gdal poppler
 ### =======================================================
 
 srun python ../../models/chained_segmenter_tiff.py
