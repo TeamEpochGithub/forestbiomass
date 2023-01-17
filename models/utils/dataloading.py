@@ -108,8 +108,10 @@ def create_tensor(band_list):
 
     return band_tensor
 
+
 class SentinelTiffDataloader(Dataset):
-    def __init__(self, training_feature_path, training_labels_path, id_month_list, bands_to_keep, corrupted_transform_method):
+    def __init__(self, training_feature_path, training_labels_path, id_month_list, bands_to_keep,
+                 corrupted_transform_method):
         self.training_feature_path = training_feature_path
         self.training_labels_path = training_labels_path
         self.id_month_list = id_month_list
@@ -120,7 +122,6 @@ class SentinelTiffDataloader(Dataset):
         return len(self.id_month_list)
 
     def __getitem__(self, idx):
-
         current_id, month = self.id_month_list[idx]
 
         label_path = osp.join(self.training_labels_path, f"{current_id}_agbm.tif")
@@ -133,8 +134,7 @@ class SentinelTiffDataloader(Dataset):
         selected_tensor = apply_transforms(bands_to_keep=self.bands_to_keep,
                                            corrupted_transform_method=self.corrupted_transform_method)(sample)
 
-
-        #return feature_tensor, label_tensor
+        # return feature_tensor, label_tensor
         return selected_tensor['image'], selected_tensor['label']
 
 
@@ -156,13 +156,12 @@ class SentinelTiffDataloaderSubmission(Dataset):
         sample = {'image': feature_tensor}
 
         selected_tensor = apply_transforms_testing(bands_to_keep=self.bands_to_keep,
-                                           corrupted_transform_method=self.corrupted_transform_method)(sample)
+                                                   corrupted_transform_method=self.corrupted_transform_method)(sample)
 
         return selected_tensor['image']
 
 
 def retrieve_tiff(feature_path, id, month):
-
     S1_path = osp.join(feature_path, f"{id}_S1_{month}.tif")
     S2_path = osp.join(feature_path, f"{id}_S2_{month}.tif")
 
@@ -177,6 +176,7 @@ def retrieve_tiff(feature_path, id, month):
     feature_tensor = create_tensor(bands)
 
     return feature_tensor
+
 
 def apply_transforms(corrupted_transform_method, bands_to_keep):
     return nn.Sequential(
@@ -195,6 +195,7 @@ def apply_transforms(corrupted_transform_method, bands_to_keep):
         tf.DropBands(torch.device('cpu'), bands_to_keep),  # DROPS ALL BUT SPECIFIED bands_to_keep
         corrupted_transform_method  # Applies corrupted band transformation
     )
+
 
 def apply_transforms_testing(corrupted_transform_method, bands_to_keep):
     return nn.Sequential(
