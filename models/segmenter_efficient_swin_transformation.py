@@ -81,12 +81,7 @@ def prepare_dataset_training(args):
                                                                                 in_channels=len(
                                                                                     args.bands_to_keep))
 
-    augments = A.Compose([
-        A.HorizontalFlip(p=0.5),
-        A.VerticalFlip(p=0.5),
-        A.RandomGridShuffle(),
-        ToTensorV2()
-    ])
+    augments = args.augmentation_set
 
     new_dataset = SentinelTiffDataloader_all(training_features_path,
                                          args.tiff_training_labels_path,
@@ -285,6 +280,30 @@ def set_args():
     # it is automatically incremented during training based on the transform method used (extra channels generated)
     extra_channels = 0
 
+    # Even een snelle lelijke manier om augmentation te testen
+    aug_set0 = A.Compose([
+        A.HorizontalFlip(p=0.5),
+        A.VerticalFlip(p=0.5),
+        ToTensorV2()
+    ])
+
+    aug_set1 = A.Compose([
+        A.HorizontalFlip(p=0.5),
+        A.VerticalFlip(p=0.5),
+        A.RandomGridShuffle(),
+        ToTensorV2()
+    ])
+
+    aug_set2 = A.Compose([
+        A.HorizontalFlip(p=0.5),
+        A.VerticalFlip(p=0.5),
+        A.RandomGridShuffle(),
+        A.Cutout(num_holes=12, max_h_size=12, max_w_size=12, p=0.5),
+        ToTensorV2()
+    ])
+
+
+
     band_map = {
         # S2 bands
         0: 'S2-B2: Blue-10m',
@@ -359,7 +378,8 @@ def set_args():
     parser.add_argument('--extra_channels', default=extra_channels, type=int)
     parser.add_argument('--warmup_epochs', default=warmup_epochs, type=int)
     parser.add_argument('--weight_decay', default=weight_decay, type=float)
-    parser.add_argument('--channel_num', default=161, type=int)
+    parser.add_argument('--channel_num', default=(len(bands_to_keep)*7), type=int)
+    parser.add_argument('--augmentation_set', default=aug_set1)
 
     args = parser.parse_args()
 
