@@ -678,7 +678,7 @@ def chained_experimental_submission(args):
 
 def set_args():
     band_segmenter = "Unet"
-    band_encoder = "efficientnet-b2"
+    band_encoder = "efficientnet-b1"
     band_encoder_weights = "imagenet"
 
     month_segmenter = "Unet"
