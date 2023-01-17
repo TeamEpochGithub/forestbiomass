@@ -171,6 +171,7 @@ def train(args):
     )
 
     ddp = DDPStrategy(process_group_backend="gloo")
+
     trainer = Trainer(
         max_epochs=args.epochs,
         logger=[logger],
@@ -178,9 +179,9 @@ def train(args):
         callbacks=[checkpoint_callback],
         num_sanity_val_steps=0,
         accelerator='gpu',
-        devices=2,
+        devices=args.device_count,
         # num_nodes=4,
-        strategy=ddp
+        strategy=args.multiprocessing_strategy
     )
 
     trainer.fit(model, train_dataloaders=train_dataloader, val_dataloaders=valid_dataloader)
@@ -261,6 +262,9 @@ def set_args():
     train_loss_function = loss_functions.rmse_loss
     val_loss_function = loss_functions.rmse_loss
 
+    multiprocessing_strategy = None  #replace with ddp if using more that 1 device
+    device_count = 1
+
     # WARNING: Only increment extra_channels when making predictions/submission (based on the transform method used)
     # it is automatically incremented during training based on the transform method used (extra channels generated)
     extra_channels = 0
@@ -335,6 +339,9 @@ def set_args():
     parser.add_argument('--val_loss_function', default=val_loss_function)
     parser.add_argument('--transform_method', default=transform_method, type=str)
     parser.add_argument('--extra_channels', default=extra_channels, type=int)
+
+    parser.add_argument('--multiprocessing_strategy', default=multiprocessing_strategy, type=str)
+    parser.add_argument('--device_count', default=device_count, type=int)
 
     args = parser.parse_args()
 
