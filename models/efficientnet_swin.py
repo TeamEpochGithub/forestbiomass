@@ -176,7 +176,7 @@ def _Conv3x3Bn(in_channels, out_channels, stride):
 efficient_model = EfficientNet_v1()
 
 class Efficient_Swin(nn.Module):
-    def __init__(self, img_size=256, hidden_dim=64, layers=(2, 2, 6,
+    def __init__(self, img_size=256, hidden_dim=64, layers=(2, 2, 18,
                                                             2), heads=(3, 6, 12, 24), channels=161, head_dim=32,
                  window_size=8, downscaling_factors=(2, 2, 2, 2), relative_pos_embedding=True):
         super(Efficient_Swin, self).__init__()

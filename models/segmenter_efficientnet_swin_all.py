@@ -306,8 +306,8 @@ def set_args():
         23: 'S2-VV/VH-Desc: Cband-10m'
     }
 
-    # bands_to_keep = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23]
-    bands_to_keep = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 11, 12, 13, 14]
+    bands_to_keep = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23]
+    # bands_to_keep = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 11, 12, 13, 14]
     band_indicator = ["1" if k in bands_to_keep else "0" for k, v in band_map.items()]
 
     parser = argparse.ArgumentParser()
@@ -331,8 +331,7 @@ def set_args():
 
     parser.add_argument('--training_ids_path', default=str(osp.join(data_path, "patch_names")), type=str)
     parser.add_argument('--testing_ids_path', default=str(osp.join(data_path, "test_patch_names")), type=str)
-    parser.add_argument('--current_model_path', default=str(osp.join(models_path, "tb_logs", model_identifier)),
-                        type=str)
+    parser.add_argument('--current_model_path', default=str(osp.join(models_path, "tb_logs", model_identifier)), type=str)
     parser.add_argument('--submission_folder_path', default=str(osp.join(data_path, "imgs", "test_agbm")), type=str)
 
     parser.add_argument('--dataloader_workers', default=dataloader_workers, type=int)
@@ -350,7 +349,7 @@ def set_args():
     parser.add_argument('--extra_channels', default=extra_channels, type=int)
     parser.add_argument('--warmup_epochs', default=warmup_epochs, type=int)
     parser.add_argument('--weight_decay', default=weight_decay, type=float)
-    parser.add_argument('--channel_num', default=98, type=int)
+    parser.add_argument('--channel_num', default=161, type=int)
 
     args = parser.parse_args()
 

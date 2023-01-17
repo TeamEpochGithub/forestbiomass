@@ -20,12 +20,14 @@ import csv
 from models.utils import loss_functions
 import argparse
 import models.utils.transforms as tf
-from models.utils.dataloading import SentinelTiffDataloader, SentinelTiffDataloaderSubmission, create_tensor, \
+from models.utils.dataloading_augment import SentinelTiffDataloader, SentinelTiffDataloaderSubmission, create_tensor, \
     apply_transforms, SentinelTiffDataloader_all, SentinelTiffDataloaderSubmission_all
 import operator
 import sys
 from models.utils.warmup_scheduler.scheduler import GradualWarmupScheduler
 from models.utils.simple_tensor_accumulate import accumulate_predictions
+import albumentations as A
+from albumentations.pytorch import ToTensorV2
 
 warnings.filterwarnings("ignore", category=rasterio.errors.NotGeoreferencedWarning)
 
@@ -79,11 +81,18 @@ def prepare_dataset_training(args):
                                                                                 in_channels=len(
                                                                                     args.bands_to_keep))
 
+    augments = A.Compose([
+        A.HorizontalFlip(p=0.5),
+        A.VerticalFlip(p=0.5),
+        A.RandomGridShuffle(),
+        ToTensorV2()
+    ])
+
     new_dataset = SentinelTiffDataloader_all(training_features_path,
                                          args.tiff_training_labels_path,
                                          chip_ids,
                                          args.bands_to_keep,
-                                         corrupted_transform_method, args.channel_num)
+                                         corrupted_transform_method, args.channel_num, augments)
 
     return new_dataset
 
@@ -306,13 +315,13 @@ def set_args():
         23: 'S2-VV/VH-Desc: Cband-10m'
     }
 
-    # bands_to_keep = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23]
-    bands_to_keep = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 11, 12, 13, 14]
+    bands_to_keep = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23]
+    # bands_to_keep = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 11, 12, 13, 14]
     band_indicator = ["1" if k in bands_to_keep else "0" for k, v in band_map.items()]
 
     parser = argparse.ArgumentParser()
     bands_to_keep_indicator = "bands-" + ''.join(str(x) for x in band_indicator)
-    model_identifier = f"efficientnet_swin_{bands_to_keep_indicator}"
+    model_identifier = f"efficientnet_swin_augment{bands_to_keep_indicator}"
 
     parser.add_argument('--model_identifier', default=model_identifier, type=str)
     # parser.add_argument('--segmenter_name', default=model_segmenter, type=str)
@@ -350,7 +359,7 @@ def set_args():
     parser.add_argument('--extra_channels', default=extra_channels, type=int)
     parser.add_argument('--warmup_epochs', default=warmup_epochs, type=int)
     parser.add_argument('--weight_decay', default=weight_decay, type=float)
-    parser.add_argument('--channel_num', default=98, type=int)
+    parser.add_argument('--channel_num', default=161, type=int)
 
     args = parser.parse_args()
 
