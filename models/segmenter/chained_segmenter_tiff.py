@@ -301,7 +301,7 @@ def train(args):
 
     trainer = Trainer(
         accelerator="gpu",
-        devices=4,
+        devices=1,
         strategy='dp',
         max_epochs=args.epochs,
         logger=[logger],
