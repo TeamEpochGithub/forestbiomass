@@ -56,7 +56,9 @@ class ChainedSegmentationDatasetMaker(Dataset):
         id = self.id_list[idx]
 
         label_path = osp.join(self.training_labels_path, f"{id}_agbm.tif")
-        label_tensor = torch.tensor(rasterio.open(label_path).read().astype(np.float32))
+        label_image = rasterio.open(label_path).read().astype(np.float32)
+        transformed_label = self.data_augmentation_pipeline(image=label_image)
+        label_tensor = torch.tensor(transformed_label['image'])
 
         tensor_list = []
 
@@ -64,11 +66,11 @@ class ChainedSegmentationDatasetMaker(Dataset):
 
             base_tensor = retrieve_tiff(self.training_feature_path, id, str(month_index), self.band_selection)
 
-            #numpy_tensor = base_tensor.cpu().detach().numpy()
+            numpy_tensor = base_tensor.cpu().detach().numpy()
 
-            #transformed_tensor = torch.tensor(self.data_augmentation_pipeline(image=numpy_tensor))
+            transformed_tensor = torch.tensor(A.ReplayCompose.replay(transformed_label['replay'], image=numpy_tensor))
 
-            dictionary_tensor = {'image': base_tensor}  # Dict required for usage of torch transforms
+            dictionary_tensor = {'image': transformed_tensor}  # Dict required for usage of torch transforms
 
             expanded_tensor = select_bands(bands_to_keep=self.band_selection)(dictionary_tensor)
 
@@ -521,7 +523,7 @@ def set_args():
     multiprocessing_strategy = None  # replace with ddp if using more that 1 device
     device_count = 1
 
-    data_augmentation_pipeline = A.Compose([
+    data_augmentation_pipeline = A.ReplayCompose([
         A.HorizontalFlip(p=0.5),
         A.VerticalFlip(p=0.5),
     ])
