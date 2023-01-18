@@ -61,7 +61,15 @@ def evaluate_loss_functions(iterations, epochs):
 
 def evaluate_different_bands(iterations, epochs):
     parameters = [{"bands_to_keep": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23]},
-                  {"bands_to_keep": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 11, 12, 13, 14]}]
+                  {"bands_to_keep": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 11, 12, 13, 14]},
+                  {"bands_to_keep": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 11, 12, 13, 14, 15]},
+                  {"bands_to_keep": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 11, 12, 13, 14, 15, 16]},
+                  {"bands_to_keep": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 11, 12, 13, 14, 15, 16, 17]},
+                  {"bands_to_keep": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 11, 12, 13, 14, 15, 16, 17, 18]},
+                  {"bands_to_keep": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 11, 12, 13, 14, 15, 16, 17, 18, 19]},
+                  {"bands_to_keep": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]},
+                  {"bands_to_keep": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21]},
+                  {"bands_to_keep": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22]}]
 
     evaluate_segmentation_parameter(parameters=parameters,
                                     iterations=iterations,
@@ -102,6 +110,6 @@ if __name__ == '__main__':
     iterations = 3
     epochs = 20
 
-    # evaluate_corrupted_transforms(iterations=iterations, epochs=epochs)
-    evaluate_loss_functions(iterations=iterations, epochs=epochs)
+    #evaluate_corrupted_transforms(iterations=iterations, epochs=epochs)
+    evaluate_different_augmentations(iterations=iterations, epochs=epochs)
     # evaluate_encoder_model_and_weights(iterations=iterations, epochs=epochs)

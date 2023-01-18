@@ -24,5 +24,5 @@ conda install pytorch==1.10.0 torchvision==0.11.0 torchaudio==0.10.0 cudatoolkit
 conda install -c default rasterio segmentation-models-pytorch pytorch-lightning torchgeo pillow gdal poppler
 ### =======================================================
 
-srun python ../../models/swin_parameter_evaluation.py
+srun python ../../models/segmenter_efficient_swin_all.py
 conda deactivate

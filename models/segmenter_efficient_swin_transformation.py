@@ -81,7 +81,12 @@ def prepare_dataset_training(args):
                                                                                 in_channels=len(
                                                                                     args.bands_to_keep))
 
-    augments = args.augmentation_set
+    augments = A.Compose([
+        A.HorizontalFlip(p=0.5),
+        A.VerticalFlip(p=0.5),
+        A.RandomGridShuffle(),
+        ToTensorV2()
+    ])
 
     new_dataset = SentinelTiffDataloader_all(training_features_path,
                                          args.tiff_training_labels_path,
@@ -302,8 +307,6 @@ def set_args():
         ToTensorV2()
     ])
 
-
-
     band_map = {
         # S2 bands
         0: 'S2-B2: Blue-10m',
@@ -378,8 +381,8 @@ def set_args():
     parser.add_argument('--extra_channels', default=extra_channels, type=int)
     parser.add_argument('--warmup_epochs', default=warmup_epochs, type=int)
     parser.add_argument('--weight_decay', default=weight_decay, type=float)
-    parser.add_argument('--channel_num', default=(len(bands_to_keep)*7), type=int)
-    parser.add_argument('--augmentation_set', default=aug_set1)
+    parser.add_argument('--channel_num', default=98, type=int)
+    # parser.add_argument('--augmentation_set', default=aug_set1)
 
     args = parser.parse_args()
 

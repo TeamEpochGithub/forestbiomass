@@ -20,12 +20,14 @@ import csv
 from models.utils import loss_functions
 import argparse
 import models.utils.transforms as tf
-from models.utils.dataloading import SentinelTiffDataloader, SentinelTiffDataloaderSubmission, create_tensor, \
+from models.utils.dataloading_augment import SentinelTiffDataloader, SentinelTiffDataloaderSubmission, create_tensor, \
     apply_transforms, SentinelTiffDataloader_all, SentinelTiffDataloaderSubmission_all
 import operator
 import sys
 from models.utils.warmup_scheduler.scheduler import GradualWarmupScheduler
 from models.utils.simple_tensor_accumulate import accumulate_predictions
+import albumentations as A
+from albumentations.pytorch import ToTensorV2
 
 warnings.filterwarnings("ignore", category=rasterio.errors.NotGeoreferencedWarning)
 
@@ -79,11 +81,18 @@ def prepare_dataset_training(args):
                                                                                 in_channels=len(
                                                                                     args.bands_to_keep))
 
+    augments = A.Compose([
+        A.HorizontalFlip(p=0.5),
+        A.VerticalFlip(p=0.5),
+        A.RandomGridShuffle(),
+        ToTensorV2()
+    ])
+
     new_dataset = SentinelTiffDataloader_all(training_features_path,
                                          args.tiff_training_labels_path,
                                          chip_ids,
                                          args.bands_to_keep,
-                                         corrupted_transform_method, args.channel_num)
+                                         corrupted_transform_method, args.channel_num, augments)
 
     return new_dataset
 
@@ -276,6 +285,28 @@ def set_args():
     # it is automatically incremented during training based on the transform method used (extra channels generated)
     extra_channels = 0
 
+    # Even een snelle lelijke manier om augmentation te testen
+    aug_set0 = A.Compose([
+        A.HorizontalFlip(p=0.5),
+        A.VerticalFlip(p=0.5),
+        ToTensorV2()
+    ])
+
+    aug_set1 = A.Compose([
+        A.HorizontalFlip(p=0.5),
+        A.VerticalFlip(p=0.5),
+        A.RandomGridShuffle(),
+        ToTensorV2()
+    ])
+
+    aug_set2 = A.Compose([
+        A.HorizontalFlip(p=0.5),
+        A.VerticalFlip(p=0.5),
+        A.RandomGridShuffle(),
+        A.Cutout(num_holes=12, max_h_size=12, max_w_size=12, p=0.5),
+        ToTensorV2()
+    ])
+
     band_map = {
         # S2 bands
         0: 'S2-B2: Blue-10m',
@@ -312,7 +343,7 @@ def set_args():
 
     parser = argparse.ArgumentParser()
     bands_to_keep_indicator = "bands-" + ''.join(str(x) for x in band_indicator)
-    model_identifier = f"efficientnet_swin_{bands_to_keep_indicator}"
+    model_identifier = f"efficientnet_swin_augment{bands_to_keep_indicator}"
 
     parser.add_argument('--model_identifier', default=model_identifier, type=str)
     # parser.add_argument('--segmenter_name', default=model_segmenter, type=str)
@@ -331,7 +362,8 @@ def set_args():
 
     parser.add_argument('--training_ids_path', default=str(osp.join(data_path, "patch_names")), type=str)
     parser.add_argument('--testing_ids_path', default=str(osp.join(data_path, "test_patch_names")), type=str)
-    parser.add_argument('--current_model_path', default=str(osp.join(models_path, "tb_logs", model_identifier)), type=str)
+    parser.add_argument('--current_model_path', default=str(osp.join(models_path, "tb_logs", model_identifier)),
+                        type=str)
     parser.add_argument('--submission_folder_path', default=str(osp.join(data_path, "imgs", "test_agbm")), type=str)
 
     parser.add_argument('--dataloader_workers', default=dataloader_workers, type=int)
@@ -349,7 +381,8 @@ def set_args():
     parser.add_argument('--extra_channels', default=extra_channels, type=int)
     parser.add_argument('--warmup_epochs', default=warmup_epochs, type=int)
     parser.add_argument('--weight_decay', default=weight_decay, type=float)
-    parser.add_argument('--channel_num', default=161, type=int)
+    parser.add_argument('--channel_num', default=98, type=int)
+    # parser.add_argument('--augmentation_set', default=aug_set1)
 
     args = parser.parse_args()
 
