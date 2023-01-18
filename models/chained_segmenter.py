@@ -28,22 +28,25 @@ from pytorch_lightning.strategies import DDPStrategy
 import argparse
 import torch.nn as nn
 from models.se_net import SqEx
+from torch import nn
+from torchgeo.transforms import indices
+import models.utils.transforms as tf
+import albumentations as A
 
 warnings.filterwarnings("ignore", category=rasterio.errors.NotGeoreferencedWarning)
 
 
 class ChainedSegmentationDatasetMaker(Dataset):
-    def __init__(self, training_feature_path, training_labels_path, id_list, data_type, S1_bands, S2_bands,
-                 band_selection, month_selection, transform=None):
+    def __init__(self, training_feature_path, training_labels_path, id_list, data_type,
+                 band_selection, month_selection, data_augmentation_pipeline, transform=None):
         self.training_feature_path = training_feature_path
         self.training_labels_path = training_labels_path
         self.id_list = id_list
         self.data_type = data_type
-        self.S1_bands = S1_bands
-        self.S2_bands = S2_bands
         self.transform = transform
         self.band_selection = band_selection
         self.month_selection = month_selection
+        self.data_augmentation_pipeline = data_augmentation_pipeline
 
     def __len__(self):
         return len(self.id_list)
@@ -59,10 +62,17 @@ class ChainedSegmentationDatasetMaker(Dataset):
 
         for month_index, month_indicator in enumerate(self.month_selection):
 
-            feature_tensor = retrieve_tiff(self.training_feature_path, id, str(month_index), self.S1_bands,
-                                           self.S2_bands, self.band_selection)
+            base_tensor = retrieve_tiff(self.training_feature_path, id, str(month_index), self.band_selection)
 
-            tensor_list.append(feature_tensor)
+            #numpy_tensor = base_tensor.cpu().detach().numpy()
+
+            #transformed_tensor = torch.tensor(self.data_augmentation_pipeline(image=numpy_tensor))
+
+            dictionary_tensor = {'image': base_tensor}  # Dict required for usage of torch transforms
+
+            expanded_tensor = select_bands(bands_to_keep=self.band_selection)(dictionary_tensor)
+
+            tensor_list.append(expanded_tensor)
 
         tensor_list = torch.cat(tensor_list, dim=0)
 
@@ -70,12 +80,10 @@ class ChainedSegmentationDatasetMaker(Dataset):
 
 
 class ChainedSegmentationSubmissionDatasetMaker(Dataset):
-    def __init__(self, testing_feature_path, id_list, data_type, S1_bands, S2_bands, band_selection, month_selection, transform=None):
+    def __init__(self, testing_feature_path, id_list, data_type, band_selection, month_selection, transform=None):
         self.testing_feature_path = testing_feature_path
         self.id_list = id_list
         self.data_type = data_type
-        self.S1_bands = S1_bands
-        self.S2_bands = S2_bands
         self.transform = transform
         self.band_selection = band_selection
         self.month_selection = month_selection
@@ -91,17 +99,20 @@ class ChainedSegmentationSubmissionDatasetMaker(Dataset):
 
         for month_index, month_indicator in enumerate(self.month_selection):
 
-            feature_tensor = retrieve_tiff(self.testing_feature_path, id, str(month_index), self.S1_bands,
-                                           self.S2_bands)
+            base_tensor = retrieve_tiff(self.testing_feature_path, id, str(month_index), self.band_selection)
 
-            tensor_list.append(feature_tensor)
+            dictionary_tensor = {'image': base_tensor}  # Dict required for usage of torch transforms
+
+            expanded_tensor = select_bands(bands_to_keep=self.band_selection)(dictionary_tensor)
+
+            tensor_list.append(expanded_tensor)
 
         tensor_list = torch.cat(tensor_list, dim=0)
 
         return tensor_list
 
 
-def retrieve_tiff(feature_path, id, month, S1_band_selection, S2_band_selection, band_selection):
+def retrieve_tiff(feature_path, id, month, band_selection):
     if int(month) < 10:
         month = "0" + month
 
@@ -116,21 +127,30 @@ def retrieve_tiff(feature_path, id, month, S1_band_selection, S2_band_selection,
     bands = []
 
     S1_bands = rasterio.open(S1_path).read().astype(np.float32)
-    S1_bands = [x for x, y in zip(S1_bands, S1_band_selection) if y == 1]
     bands.extend(S1_bands)
 
     S2_bands = rasterio.open(S2_path).read().astype(np.float32)
-    S2_bands = [x for x, y in zip(S2_bands, S2_band_selection) if y == 1]
     bands.extend(S2_bands)
 
     feature_tensor = create_tensor_from_bands_list(bands)
 
-    sample = {'image': all_tensor, 'label': label_tensor}  # 'image' and 'label' are used by torchgeo
-    selected_tensor = apply_transforms(bands_to_keep=self.bands_to_keep,
-                                       corrupted_transform_method=self.corrupted_transform_method)(sample)
-
     return feature_tensor
 
+def select_bands(bands_to_keep):
+    return nn.Sequential(
+        indices.AppendNDVI(index_nir=6, index_red=2),  # NDVI, index 15
+        indices.AppendNormalizedDifferenceIndex(index_a=11, index_b=12),  # (VV-VH)/(VV+VH), index 16
+        indices.AppendNDBI(index_swir=8, index_nir=6),
+        # Difference Built-up Index for development detection, index 17
+        indices.AppendNDRE(index_nir=6, index_vre1=3),  # Red Edge Vegetation Index for canopy detection, index 18
+        indices.AppendNDSI(index_green=1, index_swir=8),  # Snow Index, index 19
+        indices.AppendNDWI(index_green=1, index_nir=6),  # Difference Water Index for water detection, index 20
+        indices.AppendSWI(index_vre1=3, index_swir2=8),
+        # Standardized Water-Level Index for water detection, index 21
+        tf.AppendRatioAB(index_a=11, index_b=12),  # VV/VH Ascending, index 22
+        tf.AppendRatioAB(index_a=13, index_b=14),  # VV/VH Descending, index 23
+        tf.DropBands(torch.device('cpu'), bands_to_keep)  # DROPS ALL BUT SPECIFIED bands_to_keep
+    )
 
 class ChainedSegmenter(pl.LightningModule):
     def __init__(self, band_model, month_model, learning_rate, loss_function, repair_mode):
@@ -220,10 +240,9 @@ def prepare_dataset_training(args):
                                                   args.tiff_training_labels_path,
                                                   chip_ids,
                                                   args.data_type,
-                                                  args.S1_band_selection,
-                                                  args.S2_band_selection,
                                                   args.band_selection,
-                                                  args.month_selection)
+                                                  args.month_selection,
+                                                  args.data_augmentation_pipeline)
 
     return new_dataset
 
@@ -239,8 +258,6 @@ def prepare_dataset_testing(args):
     new_dataset = ChainedSegmentationSubmissionDatasetMaker(testing_features_path,
                                                             chip_ids,
                                                             args.data_type,
-                                                            args.S1_band_selection,
-                                                            args.S2_band_selection,
                                                             args.band_selection,
                                                             args.month_selection)
     return new_dataset, chip_ids
@@ -255,9 +272,41 @@ def select_segmenter(segmenter_name, encoder_name, encoder_weights, channel_coun
             classes=1,
             encoder_weights=encoder_weights
         )
-    elif segmenter_name == "DeepLabV3+":
+    elif segmenter_name == "Unet++":
 
-        base_model = smp.DeepLabV3Plus(
+        base_model = smp.UnetPlusPlus(
+            encoder_name=encoder_name,
+            in_channels=channel_count,
+            classes=1,
+            encoder_weights=encoder_weights
+        )
+    elif segmenter_name == "MAnet":
+
+        base_model = smp.MAnet(
+            encoder_name=encoder_name,
+            in_channels=channel_count,
+            classes=1,
+            encoder_weights=encoder_weights
+        )
+    elif segmenter_name == "Linknet":
+
+        base_model = smp.Linknet(
+            encoder_name=encoder_name,
+            in_channels=channel_count,
+            classes=1,
+            encoder_weights=encoder_weights
+        )
+    elif segmenter_name == "FPN":
+
+        base_model = smp.FPN(
+            encoder_name=encoder_name,
+            in_channels=channel_count,
+            classes=1,
+            encoder_weights=encoder_weights
+        )
+    elif segmenter_name == "PSPNet":
+
+        base_model = smp.PSPNet(
             encoder_name=encoder_name,
             in_channels=channel_count,
             classes=1,
@@ -266,6 +315,22 @@ def select_segmenter(segmenter_name, encoder_name, encoder_weights, channel_coun
     elif segmenter_name == "PAN":
 
         base_model = smp.PAN(
+            encoder_name=encoder_name,
+            in_channels=channel_count,
+            classes=1,
+            encoder_weights=encoder_weights
+        )
+    elif segmenter_name == "DeepLabV3":
+
+        base_model = smp.DeepLabV3(
+            encoder_name=encoder_name,
+            in_channels=channel_count,
+            classes=1,
+            encoder_weights=encoder_weights
+        )
+    elif segmenter_name == "DeepLabV3+":
+
+        base_model = smp.DeepLabV3Plus(
             encoder_name=encoder_name,
             in_channels=channel_count,
             classes=1,
@@ -404,7 +469,7 @@ def accumulate_predictions(l):
         yield key, total / len(group_list)
 
 
-def chained_experimental_submission(args):
+def submission_generator(args):
     model = load_model(args)
 
     new_dataset, chip_ids = prepare_dataset_testing(args)
@@ -433,11 +498,11 @@ def chained_experimental_submission(args):
 
 def set_args():
     band_segmenter = "Unet++"
-    band_encoder = "efficientnet-b2"
+    band_encoder = "efficientnet-b0"
     band_encoder_weights = "imagenet"
 
     month_segmenter = "Unet++"
-    month_encoder = "efficientnet-b2"
+    month_encoder = "efficientnet-b0"
     month_encoder_weights = "imagenet"
 
     data_type = "tiff"  # options are "npy" or "tiff"
@@ -448,13 +513,18 @@ def set_args():
     batch_size = 8
     log_step_frequency = 50
     version = -1  # Keep -1 if loading the latest model version.
-    save_top_k_checkpoints = 3
+    save_top_k_checkpoints = 1
     loss_function = loss_functions.rmse_loss
 
     missing_month_repair_mode = "zeros"
 
     multiprocessing_strategy = None  # replace with ddp if using more that 1 device
     device_count = 1
+
+    data_augmentation_pipeline = A.Compose([
+        A.HorizontalFlip(p=0.5),
+        A.VerticalFlip(p=0.5),
+    ])
 
     month_selection = {
         "September": 1,
@@ -581,6 +651,8 @@ def set_args():
     parser.add_argument('--multiprocessing_strategy', default=multiprocessing_strategy, type=str)
     parser.add_argument('--device_count', default=device_count, type=int)
 
+    parser.add_argument('--data_augmentation_pipeline', default=data_augmentation_pipeline)
+
     args = parser.parse_args()
 
     print('=' * 30)
@@ -593,5 +665,5 @@ def set_args():
 
 if __name__ == '__main__':
     args = set_args()
-    #train(args)
+    train(args)
     #chained_experimental_submission(args)
