@@ -32,6 +32,7 @@ from torch import nn
 from torchgeo.transforms import indices
 import models.utils.transforms as tf
 import albumentations as A
+from albumentations.pytorch import ToTensorV2
 
 warnings.filterwarnings("ignore", category=rasterio.errors.NotGeoreferencedWarning)
 
@@ -57,28 +58,45 @@ class ChainedSegmentationDatasetMaker(Dataset):
 
         label_path = osp.join(self.training_labels_path, f"{id}_agbm.tif")
         label_image = rasterio.open(label_path).read().astype(np.float32)
-        transformed_label = self.data_augmentation_pipeline(image=label_image)
-        label_tensor = torch.tensor(transformed_label['image'])
+        label_tensor = torch.tensor(label_image)
 
-        tensor_list = []
+        all_bands = []
 
         for month_index, month_indicator in enumerate(self.month_selection):
 
-            base_tensor = retrieve_tiff(self.training_feature_path, id, str(month_index), self.band_selection)
+            band_images = retrieve_tiff(self.training_feature_path, id, str(month_index), self.band_selection)
 
-            numpy_tensor = base_tensor.cpu().detach().numpy()
+            all_bands.extend(band_images)
 
-            transformed_tensor = torch.tensor(A.ReplayCompose.replay(transformed_label['replay'], image=numpy_tensor))
+        combined_tensor = albumentation_input_wrapper(all_bands, label_image, args.data_augmentation_pipeline)
 
-            dictionary_tensor = {'image': transformed_tensor}  # Dict required for usage of torch transforms
+        tensor_list = []
+
+        for index, current_band in enumerate(torch.tensor_split(combined_tensor, len(self.month_selection), dim=0)):
+
+            dictionary_tensor = {'image': current_band}
 
             expanded_tensor = select_bands(bands_to_keep=self.band_selection)(dictionary_tensor)
 
             tensor_list.append(expanded_tensor)
 
-        tensor_list = torch.cat(tensor_list, dim=0)
-
         return tensor_list, label_tensor
+
+
+def albumentation_input_wrapper(images, label_image, augmenter):
+
+    input_dict = {}
+
+    for index, current_image in enumerate(images):
+
+        if index == 0:
+            input_dict['image'] = current_image
+        else:
+            input_dict[f'image{index}'] = current_image
+
+    input_dict['mask'] = label_image
+
+    return augmenter(**input_dict)
 
 
 class ChainedSegmentationSubmissionDatasetMaker(Dataset):
@@ -113,7 +131,6 @@ class ChainedSegmentationSubmissionDatasetMaker(Dataset):
 
         return tensor_list
 
-
 def retrieve_tiff(feature_path, id, month, band_selection):
     if int(month) < 10:
         month = "0" + month
@@ -134,9 +151,9 @@ def retrieve_tiff(feature_path, id, month, band_selection):
     S2_bands = rasterio.open(S2_path).read().astype(np.float32)
     bands.extend(S2_bands)
 
-    feature_tensor = create_tensor_from_bands_list(bands)
+    #feature_tensor = create_tensor_from_bands_list(bands)
 
-    return feature_tensor
+    return bands
 
 def select_bands(bands_to_keep):
     return nn.Sequential(
@@ -523,11 +540,6 @@ def set_args():
     multiprocessing_strategy = None  # replace with ddp if using more that 1 device
     device_count = 1
 
-    data_augmentation_pipeline = A.ReplayCompose([
-        A.HorizontalFlip(p=0.5),
-        A.VerticalFlip(p=0.5),
-    ])
-
     month_selection = {
         "September": 1,
         "October": 1,
@@ -599,6 +611,22 @@ def set_args():
     else:
         model_identifier = f"Bands_{band_segmenter}_{band_encoder}_{band_selection_indicator}" \
                            f"_Months_{month_segmenter}_{month_encoder}_{month_selection_indicator}"
+
+    band_dict = {}
+
+    for i in range(0, len(band_selection) * len(month_selection)):
+        if i == 0:
+            band_dict['image'] = 'image'
+        else:
+            band_dict[f'image{i}'] = 'image'
+
+    band_dict['mask'] = 'mask'
+
+    data_augmentation_pipeline = A.Compose([
+        A.HorizontalFlip(p=0.5),
+        A.VerticalFlip(p=0.5),
+        ToTensorV2()
+    ], additional_targets=band_dict)
 
     parser = argparse.ArgumentParser()
 
