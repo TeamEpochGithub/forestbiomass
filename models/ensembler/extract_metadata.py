@@ -31,13 +31,25 @@ def extract_metadata_band(band, missing):
 
 
 def extract_metadata_batch(batch):
+    """
+    @param batch: A torch tensor of shape (batch_size, 12 * num_bands, 256, 256)
+    @return: A torch tensor of shape (batch_size, 12 * num_bands) indicating "corruptedness" for each band, where 0 is very corrupted
+    and 1 is not corrupted
+    """
     batch_metadata = []
     for patch in batch:
 
-        # TODO: see how missing bands are treated in the dataloader we want to use and change code accordingly
         patch_metadata = []
         for band in patch:
             patch_metadata.append(extract_metadata_band(band, False))
 
         batch_metadata.append(patch_metadata)
     return torch.FloatTensor(batch_metadata)
+
+if __name__ == '__main__':
+    # very_corrupted = torch.zeros(16, 180, 256, 256)
+    # print(extract_metadata_batch(very_corrupted))
+
+    non_corrupted = torch.rand(16, 180, 256, 256)
+    print(extract_metadata_batch(non_corrupted).shape)
+
