@@ -20,6 +20,7 @@ import csv
 from models.utils import loss_functions
 import argparse
 import models.utils.transforms as tf
+import torch.nn.functional as F
 from models.utils.patched_dataloading import (
     SentinelDataLoader,
     create_tensor,
@@ -79,11 +80,14 @@ class PatchedSentinel2Model(pl.LightningModule):
         self.image_patch_size = args.image_patch_size
         self.num_patches = (256 // self.image_patch_size) ** 2  # symmetrical
         self.num_patches_per_dim = int(np.sqrt(self.num_patches))
+        self.args = args
+        # self.norm_map = norm_map
 
     def training_step(self, batch, batch_idx):
         x, y = batch
-        x = x.view(-1, x.shape[2], x.shape[3], x.shape[4])
-        y = y.view(-1, y.shape[2], y.shape[3], y.shape[4])
+        # print(x.shape, y.shape)
+        x = x.view(-1, x.shape[-3], x.shape[-2], x.shape[-1])
+        y = y.view(-1, y.shape[-3], y.shape[-2], y.shape[-1])
         y_hat = self.model(x)
         loss = self.train_loss_function(y_hat, y)
         self.log("train/loss", loss, rank_zero_only=True)
@@ -93,11 +97,41 @@ class PatchedSentinel2Model(pl.LightningModule):
         x, y = batch
         x = x.view(-1, x.shape[2], x.shape[3], x.shape[4])
         y = y.view(-1, y.shape[2], y.shape[3], y.shape[4])
+        norm = F.unfold(
+            torch.ones(
+                (
+                    self.args.batch_size,
+                    1,
+                    self.args.image_size,
+                    self.args.image_size,
+                )
+            ),
+            kernel_size=self.args.image_patch_size,
+            stride=self.args.stride,
+        )
+        norm_map = F.fold(
+            norm,
+            (self.args.image_size, self.args.image_size),
+            kernel_size=self.args.image_patch_size,
+            stride=self.args.stride,
+        )
         y_hat = self.model(x)
         loss = self.val_loss_function(y_hat, y)
         self.log("val/loss", loss, rank_zero_only=True)
-        y_hat_orig = reasamble_patches(y_hat, self.num_patches_per_dim)
-        y_orig = reasamble_patches(y, self.num_patches_per_dim)
+        y_hat_orig = reasamble_patches(
+            y_hat,
+            self.args.image_patch_size,
+            self.args.stride,
+            self.args.batch_size,
+            norm_map,
+        )
+        y_orig = reasamble_patches(
+            y,
+            self.args.image_patch_size,
+            self.args.stride,
+            self.args.batch_size,
+            norm_map,
+        )
         orig_loss = self.val_loss_function(y_hat_orig, y_orig)
         self.log("val/full_loss", orig_loss, rank_zero_only=True)
         return loss
@@ -161,7 +195,6 @@ def train(args):
     for arg in vars(args):
         print("--", arg, ":", getattr(args, arg))
     print("=" * 30)
-
     print("Getting train data...")
 
     train_dataset, number_of_channels = prepare_dataset(args)
@@ -418,7 +451,24 @@ def create_submissions(args):
 
                 selected_tensor = selected_tensor["image"]
                 pred = model(selected_tensor.unsqueeze(0))
-                pred = reasamble_patches(pred)
+                norm = F.unfold(
+                    torch.ones(pred.shape),
+                    kernel_size=args.image_patch_size,
+                    stride=args.stride,
+                )
+                norm_map = F.fold(
+                    norm,
+                    pred.shape[-2:],
+                    kernel_size=args.image_patch_size,
+                    stride=args.stride,
+                )
+                pred = reasamble_patches(
+                    pred,
+                    args.image_patch_size,
+                    args.stride,
+                    args.batch_size,
+                    norm_map,
+                )
                 pred = pred.cpu().squeeze().detach().numpy()
                 all_months.append(pred)
 
@@ -480,7 +530,13 @@ def experimental_submission(args):
 
     predictions = trainer.predict(model, dataloaders=dl)
     predictions = [
-        reasamble_patches(prediction, int(np.sqrt(new_dataset.num_patches)))
+        reasamble_patches(
+            prediction,
+            args.image_patch_size,
+            args.stride,
+            args.batch_size,
+            norm_map,
+        )
         for prediction in predictions
     ]
     tensor_id_list = [i[0] for i in id_month_list]
@@ -512,7 +568,7 @@ def set_args():
     learning_rate = 1e-4
     dataloader_workers = 4
     validation_fraction = 0.2
-    batch_size = 4
+    batch_size = 1
     log_step_frequency = 10
     version = -1  # Keep -1 if loading the latest model version.
     save_top_k_checkpoints = 1
@@ -579,6 +635,8 @@ def set_args():
     ]
     band_indicator = ["1" if k in bands_to_keep else "0" for k, v in band_map.items()]
     image_patch_size = 32
+    stride = 8
+    image_size = 256
     precision = 16
 
     parser = argparse.ArgumentParser()
@@ -652,6 +710,8 @@ def set_args():
         type=int,
         help="target size for the divided (PatchedUp) image",
     )
+    parser.add_argument("--stride", default=stride, type=int)
+    parser.add_argument("--image_size", default=image_size, type=int)
     parser.add_argument("--patched", default=patched, type=bool)
     parser.add_argument("--precision", default=precision, type=int)
 

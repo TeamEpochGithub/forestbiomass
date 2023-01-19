@@ -129,9 +129,9 @@ class SubmissionDataLoader(Dataset):
             # Standardized Water-Level Index for water detection, index 21
             tf.AppendRatioAB(index_a=11, index_b=12),  # VV/VH Ascending, index 22
             tf.AppendRatioAB(index_a=13, index_b=14),  # VV/VH Descending, index 23
-            tf.DropBands(
-                torch.device("cpu"), self.bands_to_keep
-            ),  # DROPS ALL BUT SPECIFIED bands_to_keep
+            # tf.DropBands(
+            #     torch.device("cpu"), self.bands_to_keep
+            # ),  # DROPS ALL BUT SPECIFIED bands_to_keep
             self.corrupted_transform_method,  # Applies corrupted band transformation
         )
 
@@ -191,46 +191,48 @@ def apply_transforms(corrupted_transform_method, bands_to_keep):
     )
 
 
-def reasamble_patches(patches, num_patches=8):
+def reasamble_patches(patches, kernel_size, stride, batch_size, norm_map):
     patch_shape = patches.shape
     channels = patch_shape[1]
-    batch_size = int(patch_shape[0] / num_patches**2)
-    unfold_shape = (
-        channels * batch_size,
-        num_patches,
-        num_patches,
-        patch_shape[2],
-        patch_shape[3],
+    output_h = 256
+    output_w = 256
+    a_unf = patches.view(batch_size, -1, channels * kernel_size * kernel_size).permute(
+        0, 2, 1
     )
-    patches_orig = patches.view(unfold_shape)
-    output_h = unfold_shape[1] * unfold_shape[3]
-    output_w = unfold_shape[2] * unfold_shape[4]
-    patches_orig = patches_orig.permute(0, 1, 3, 2, 4).contiguous()
-    patches_orig = patches_orig.view(channels * batch_size, output_h, output_w)
+    # print(a_unf.shape)
+    patches_orig = F.fold(a_unf, (output_h, output_w), kernel_size, stride=stride)
+    patches_orig /= norm_map
     # import matplotlib.pyplot as plt
-    # plt.imshow(patches_orig[0, :, :].to(torch.float64))
+
+    # plt.imshow(patches_orig[0, 0, :, :].to(torch.float64))
     # plt.colorbar()
     # plt.show()
     return patches_orig
 
 
-def divide_into_patches(image, patch_size):
-    channels = image.shape[0]
-    patches = image.unfold(-2, patch_size, patch_size).unfold(
-        -2, patch_size, patch_size
+def divide_into_patches(image, kernel_size):
+    if len(image.shape) < 4:
+        image.unsqueeze_(0)
+    bs = image.shape[0]
+    channels = image.shape[1]
+    stride = 8
+    a_unf = F.unfold(image, kernel_size, padding=0, stride=stride)
+    patches = (
+        a_unf.permute(0, 2, 1)
+        .contiguous()
+        .view(bs, -1, channels, kernel_size, kernel_size)
     )
-    unfold_shape = patches.size()
-    patches = patches.contiguous().view(-1, channels, patch_size, patch_size)
+    # print(a_unf.shape)
     # print(patches.shape)
-    # patches_orig = patches.view(unfold_shape)
-    # output_h = unfold_shape[1] * unfold_shape[3]
-    # output_w = unfold_shape[2] * unfold_shape[4]
-    # patches_orig = patches_orig.permute(0, 1, 3, 2, 4).contiguous()
-    # patches_orig = patches_orig.view(channels, output_h, output_w)
-    # # import matplotlib.pyplot as plt
+    # norm = F.unfold(torch.ones(image.shape), kernel_size, stride=stride)
+    # a_Folded = F.fold(a_unf, image.shape[-2:], kernel_size, stride=stride)
+    # norm_map = F.fold(norm, image.shape[-2:], kernel_size, stride=stride)
+    # a_Folded /= norm_map
+    # import matplotlib.pyplot as plt
 
-    # plt.imshow(image[0, :, :])
+    # plt.imshow(image[0, 0, :, :])
     # plt.show()
-    # plt.imshow(patches_orig[0, :, :])
+    # plt.imshow(a_Folded[0, 0, :, :])
     # plt.show()
-    return patches
+    # print(torch.allclose(image, a_Folded))
+    return patches.squeeze(0)
