@@ -197,7 +197,7 @@ def train(args,train_set,save_path):
         'GBM': [{}, {'extra_trees': True, 'ag_args': {'name_suffix': 'XT'}}, 'GBMLarge'],
         'FASTAI': {'ag_args_fit': {}},
     }, 
-   keep_only_best=True, save_space=True, holdout_frac=0.10, num_cpus=12, time_limit=60*60*24,
+   keep_only_best=True, save_space=True, holdout_frac=0.10, use_bag_holdout=True, num_cpus=12, time_limit=60*60*24,
 )
 
 
@@ -443,6 +443,6 @@ if __name__ == "__main__":
     train_size = int((1 - args.validation_fraction) * len(train_dataset))
     valid_size = len(train_dataset) - train_size
     train_set, val_set = torch.utils.data.random_split(train_dataset, [train_size, valid_size])
-    save_path = 'agModels_efficent'  # specifies folder to store trained models
+    save_path = 'agModels_efficent_2'  # specifies folder to store trained models
     train(args,train_set,save_path)
     test(args,val_set,save_path)

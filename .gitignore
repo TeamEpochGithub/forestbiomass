@@ -10,6 +10,7 @@ agModels/**
 agModels_2/**
 agModels_3/**
 agModels_efficent/**
+agModels_efficent_2/**
 .conda/**
 
 # Byte-compiled / optimized / DLL files

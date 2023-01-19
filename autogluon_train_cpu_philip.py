@@ -196,8 +196,8 @@ def train(args,train_set,save_path):
         'CAT': {'ag_args_fit': {}},
         'GBM': [{}, {'extra_trees': True, 'ag_args': {'name_suffix': 'XT'}}, 'GBMLarge'],
         'FASTAI': {'ag_args_fit': {}},
-    }, 
-   keep_only_best=True, save_space=True, holdout_frac=0.10, num_cpus=40, time_limit=60*60*72,
+    },
+   keep_only_best=True, save_space=True, holdout_frac=0.10, use_bag_holdout=True, num_cpus=40, time_limit=60*60*72,
 )
 
 
