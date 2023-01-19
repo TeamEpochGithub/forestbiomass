@@ -48,16 +48,12 @@ def train_and_eval(model, train_loader, valid_loader, optimizer, criterion, epoc
         for step, (features, agbm) in enumerate(train_loader):
             # ======== TRAINING ========
             metadata = extract_metadata_batch(features)
-            print(metadata.shape)
 
             # 1. Move the tensors to the configured device.
             # metadata, agbm, features = metadata.to(DEVICE), agbm.to(DEVICE), features.to(DEVICE)
             # 2. Forward pass by passing the images through the model.
             w1, w2, w3 = torch.tensor_split(model(metadata), 3, dim=1)
-            print(model(metadata).shape)
             w1, w2, w3 = w1.view(-1, 1, 1), w2.view(-1, 1, 1), w3.view(-1, 1, 1)
-            print(w1.shape)
-            print(segmentation_model(features).shape)
             pred = (w1 * segmentation_model(features)) + (w2 * swin_model(features)) + (w3 * pixelwise_model(features))
 
             # 3. Zero the gradients of all model parameters.
@@ -112,7 +108,7 @@ def train_and_eval(model, train_loader, valid_loader, optimizer, criterion, epoc
         global_valid_loss.extend(valid_loss)
         best_train_loss = min(best_train_loss, np.mean(train_loss))
         best_valid_loss = min(best_valid_loss, np.mean(valid_loss))
-        print(f"Best Train Accuracy: {best_train_loss:.2%} Best Valid Accuracy: {best_valid_loss:.2%}")
+        print(f"Best Train Loss: {best_train_loss} Best Valid Loss: {best_valid_loss}")
 
     return global_train_loss, global_valid_loss
 
@@ -149,9 +145,9 @@ if __name__ == '__main__':
     loss_function = rmse_loss
     epochs = 100
 
-    batch_size = 32
+    batch_size = 16
     image_size = 256
-    placeholder = (lambda x: torch.rand((batch_size, image_size, image_size)))
+    placeholder = (lambda x: torch.rand((x.shape[0], image_size, image_size)))
     # TODO: Placeholders should be replaced by a method that takes a batch and returns a batch of predictions.
     #  To make the predictions a pretrained model should be loaded.
     segmentation_model = placeholder
