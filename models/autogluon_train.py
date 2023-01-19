@@ -1,20 +1,14 @@
-import itertools
-import operator
-import sys
-
 import torch
-from PIL import Image
 from torch.utils.data import Dataset, DataLoader
 
-# from torch import distributed as dist
-# import segmentation_models_pytorch as smp
 import os
 import rasterio
 import warnings
 import numpy as np
 import os.path as osp
-import models
+
 import data
+import models
 import csv
 from models.utils import loss_functions
 import argparse
@@ -262,7 +256,7 @@ def train(args):
         time_limit=60 * 60 * 6,
         presets="best_quality",
         holdout_frac=0.05,
-        num_cpus=12,
+        num_cpus=44,
     )
     del X
     del Y
@@ -421,7 +415,7 @@ def set_args():
     parser.add_argument("--model_version", default=version, type=int)
     parser.add_argument("--data_type", default=data_type, type=str)
 
-    data_path = "C:/Users/kuipe/Desktop/Epoch/forestbiomass/data"
+    data_path = osp.dirname(data.__file__)
     models_path = osp.dirname(models.__file__)
 
     parser.add_argument(
