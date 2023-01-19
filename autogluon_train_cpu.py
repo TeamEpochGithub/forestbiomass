@@ -154,23 +154,14 @@ def create_csv_files(args):
             np.savetxt(f,row)
 
 
-def train(args):
-    train_dataset = prepare_dataset_training(args)
-
-    train_size = int((1 - args.validation_fraction) * len(train_dataset))
-    valid_size = len(train_dataset) - train_size
-
-    train_set, val_set = torch.utils.data.random_split(train_dataset, [train_size, valid_size])
-
+def train(args,train_set,save_path):
     train_dataloader = DataLoader(train_set, batch_size=args.batch_size, shuffle=True,
-                                  num_workers=args.dataloader_workers)
-    valid_dataloader = DataLoader(val_set, batch_size=args.batch_size, shuffle=False,
                                   num_workers=args.dataloader_workers)
     X=[]
     Y=[]
     c=0
     lower=0
-    upper=65
+    upper=100
     for (x, y) in tqdm(train_dataloader):
         X.append(x.detach().cpu().numpy().reshape(x.shape[1],-1).transpose(1,0))
         Y.append(y.detach().cpu().numpy().reshape(y.shape[1],-1).transpose(1,0))
@@ -186,36 +177,40 @@ def train(args):
     Y=Y.reshape(Y.shape[0]*Y.shape[1],Y.shape[2])
     X = pd.DataFrame(X)
     X["target"]=Y
-    subsample_size = 20  # subsample subset of data for faster demo, try setting this to much larger values
+    del Y
+    subsample_size = 250000  # subsample subset of data for faster demo, try setting this to much larger values
     train_data = X.sample(n=subsample_size, random_state=0)
     print(train_data.head())
+    del X
     metric = "rmse" #'mean_absolute_error'
-    save_path = 'agModels_3'  # specifies folder to store trained models
     #predictor = TabularPredictor(label="target", problem_type="regression", path=save_path,eval_metric = metric).fit(X, time_limit=60*60*12, presets='best_quality', holdout_frac=0.05,num_cpus=12)
     predictor = TabularPredictor(label="target", problem_type="regression", path=save_path,eval_metric = metric).fit(
-    X,
+    train_data,
     presets='best_quality',
     # hyperparameters = 'light'
     hyperparameters={
         KNNRapidsModel: {},
         LinearRapidsModel: {},
         'RF': {},
-        'XGB': {'ag_args_fit': {'num_gpus': 2}},
-        'CAT': {'ag_args_fit': {'num_gpus': 2}},
+        'XGB': {'ag_args_fit': {}},
+        'CAT': {'ag_args_fit': {}},
         'GBM': [{}, {'extra_trees': True, 'ag_args': {'name_suffix': 'XT'}}, 'GBMLarge'],
-        'NN_MXNET': {'ag_args_fit': {'num_gpus': 2}},
-        'FASTAI': {'ag_args_fit': {'num_gpus': 2}},
-    },
+        'NN_MXNET': {'ag_args_fit': {}},
+        'FASTAI': {'ag_args_fit': {}},
+    }, 
+   keep_only_best=True, save_space=True, holdout_frac=0.10, num_cpus=12, time_limit=60*60*24,
 )
-    del X
-    del Y
 
-    # predictor = TabularPredictor.load(save_path)  # unnecessary, just demonstrates how to load previously-trained predictor from file
+
+def test(args,val_set,save_path):
+    valid_dataloader = DataLoader(val_set, batch_size=args.batch_size, shuffle=True,
+                                  num_workers=args.dataloader_workers)
+    predictor = TabularPredictor.load(save_path)
     test_data_nolab=[]
     label=[]
     c=0
     lower=0
-    upper=5
+    upper=10
     for (x, y) in tqdm(valid_dataloader):
         test_data_nolab.append(x.detach().cpu().numpy().reshape(x.shape[1],-1).transpose(1,0))
         label.append(y.detach().cpu().numpy().reshape(y.shape[1],-1).transpose(1,0))
@@ -228,13 +223,19 @@ def train(args):
     test_data_nolab=test_data_nolab.reshape(test_data_nolab.shape[0]*test_data_nolab.shape[1],test_data_nolab.shape[2])
     label=np.array(label)
     label=label.reshape(label.shape[0]*label.shape[1],label.shape[2])
+    print(test_data_nolab.shape)
     test_data_nolab = pd.DataFrame(test_data_nolab)
     test_data=test_data_nolab.copy()
     test_data["target"]=label
+    print(test_data.head())
     y_pred = predictor.predict(test_data_nolab)
     print("Predictions:  \n", y_pred)
+    rmse=np.sqrt(np.mean((np.expand_dims(y_pred.to_numpy(),1)-label)**2)) 
+    print("RMSE: ",rmse)
     perf = predictor.evaluate_predictions(y_true=test_data["target"], y_pred=y_pred, auxiliary_metrics=True)
-    predictor.leaderboard(test_data, silent=True)
+    print(perf)
+    print(predictor.leaderboard(test_data, silent=True))
+    print(predictor.feature_importance(test_data))
 
 def create_tensor_from_bands_list(band_list):
     band_array = np.asarray(band_list, dtype=np.float32)
@@ -282,6 +283,20 @@ def set_args():
         "July": 1,
         "August": 1,
     }
+    # month_selection = {
+    #     "September": 1,
+    #     "October": 1,
+    #     "November": 1,
+    #     "December": 1,
+    #     "January": 1,
+    #     "February": 1,
+    #     "March": 1,
+    #     "April": 1,
+    #     "May": 1,
+    #     "June": 1,
+    #     "July": 1,
+    #     "August": 1,
+    # }
 
     month_list = list(month_selection.values())
 
@@ -425,4 +440,10 @@ def set_args():
 
 if __name__ == "__main__":
     args = set_args()
-    train(args)
+    train_dataset = prepare_dataset_training(args)
+    train_size = int((1 - args.validation_fraction) * len(train_dataset))
+    valid_size = len(train_dataset) - train_size
+    train_set, val_set = torch.utils.data.random_split(train_dataset, [train_size, valid_size])
+    save_path = 'agModels_efficent'  # specifies folder to store trained models
+    train(args,train_set,save_path)
+    test(args,val_set,save_path)
