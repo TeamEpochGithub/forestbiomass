@@ -161,7 +161,7 @@ def train(args,train_set,save_path):
     Y=[]
     c=0
     lower=0
-    upper=100
+    upper=4500
     for (x, y) in tqdm(train_dataloader):
         X.append(x.detach().cpu().numpy().reshape(x.shape[1],-1).transpose(1,0))
         Y.append(y.detach().cpu().numpy().reshape(y.shape[1],-1).transpose(1,0))
@@ -178,7 +178,7 @@ def train(args,train_set,save_path):
     X = pd.DataFrame(X)
     X["target"]=Y
     del Y
-    subsample_size = 250000  # subsample subset of data for faster demo, try setting this to much larger values
+    subsample_size = 60000000  # subsample subset of data for faster demo, try setting this to much larger values
     train_data = X.sample(n=subsample_size, random_state=0)
     print(train_data.head())
     del X
@@ -197,7 +197,7 @@ def train(args,train_set,save_path):
         'GBM': [{}, {'extra_trees': True, 'ag_args': {'name_suffix': 'XT'}}, 'GBMLarge'],
         'FASTAI': {'ag_args_fit': {}},
     }, 
-   keep_only_best=True, save_space=True, holdout_frac=0.10, num_cpus=12, time_limit=60*60*24,
+   keep_only_best=True, save_space=True, holdout_frac=0.10, num_cpus=40, time_limit=60*60*72,
 )
 
 
@@ -209,7 +209,7 @@ def test(args,val_set,save_path):
     label=[]
     c=0
     lower=0
-    upper=10
+    upper=200
     for (x, y) in tqdm(valid_dataloader):
         test_data_nolab.append(x.detach().cpu().numpy().reshape(x.shape[1],-1).transpose(1,0))
         label.append(y.detach().cpu().numpy().reshape(y.shape[1],-1).transpose(1,0))
