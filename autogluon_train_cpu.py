@@ -192,6 +192,7 @@ def train(args,train_set,save_path):
         KNNRapidsModel: {},
         LinearRapidsModel: {},
         'RF': {},
+        'KNN': {},
         'XGB': {'ag_args_fit': {}},
         'CAT': {'ag_args_fit': {}},
         'GBM': [{}, {'extra_trees': True, 'ag_args': {'name_suffix': 'XT'}}, 'GBMLarge'],
