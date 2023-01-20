@@ -237,6 +237,30 @@ def test(args,val_set,save_path):
     print(predictor.leaderboard(test_data, silent=True))
     print(predictor.feature_importance(test_data))
 
+def submission(args,test_set,save_path):
+    test_dataloader = DataLoader(test_set, batch_size=args.batch_size, shuffle=True,
+                                  num_workers=args.dataloader_workers)
+    predictor = TabularPredictor.load(save_path)
+    test_data_nolab=[]
+    for (x, y) in tqdm(test_dataloader):
+        test_data_nolab.append(x.detach().cpu().numpy().reshape(x.shape[1],-1).transpose(1,0))
+    test_data_nolab=np.array(test_data_nolab)  
+    test_data_nolab=test_data_nolab.reshape(test_data_nolab.shape[0]*test_data_nolab.shape[1],test_data_nolab.shape[2])
+    test_data_nolab = pd.DataFrame(test_data_nolab)
+    y_pred = predictor.predict(test_data_nolab)
+    print("Predictions:  \n", y_pred)
+    y_pred=y_pred.reshape(256,256,-1).permute(1,0)
+    with open(args.testing_ids_path, newline='') as f:
+        reader = csv.reader(f)
+        patch_name_data = list(reader)
+    ids = patch_name_data[0]
+    for i,current_tensor in enumerate(y_pred):
+        current_id=ids[i]
+        agbm_path = osp.join(args.submission_folder_path, f"{current_id}_agbm.tif")
+        im = Image.fromarray(current_tensor)
+        im.save(agbm_path)
+    return y_pred
+
 def create_tensor_from_bands_list(band_list):
     band_array = np.asarray(band_list, dtype=np.float32)
     band_tensor = torch.tensor(band_array)
