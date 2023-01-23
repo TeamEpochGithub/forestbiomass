@@ -62,24 +62,19 @@ class ChainedSegmentationDatasetMaker(Dataset):
         all_bands = []
 
         for month_index, month_indicator in enumerate(self.month_selection):
-
             band_images = retrieve_tiff(self.training_feature_path, id, str(month_index), self.band_selection)
 
             all_bands.extend(band_images)
 
         transformed_images_dict = albumentation_input_wrapper(all_bands, label_image, self.data_augmentation_pipeline)
 
-        transformed_images_list = list(transformed_images_dict.values())
-
-        transformed_label_image = transformed_images_list.pop()  # The label is the last image processed.
-
-        label_tensor = torch.from_numpy(np.asarray(transformed_label_image, dtype=np.float32).copy())
+        label_tensor = torch.from_numpy(np.asarray(transformed_images_dict['mask'], dtype=np.float32).copy())
 
         tensor_list = []
 
-        for index, current_band in enumerate(np.array_split(np.asarray(transformed_images_list), len(self.month_selection))):
-
-            normalized_tensors = create_tensor_from_bands_list(current_band)
+        for index, current_band in enumerate(
+                np.array_split(np.asarray(transformed_images_dict['image']), len(self.month_selection))):
+            normalized_tensors = torch.tensor(current_band)
 
             dictionary_tensor = {'image': normalized_tensors}
 
@@ -94,18 +89,7 @@ class ChainedSegmentationDatasetMaker(Dataset):
 
 def albumentation_input_wrapper(images, label_image, augmenter):
 
-    input_dict = {}
-
-    for index, current_image in enumerate(images):
-
-        if index == 0:
-            input_dict['image'] = current_image
-        else:
-            input_dict[f'image{index}'] = current_image
-
-    input_dict['mask'] = label_image
-
-    return augmenter(**input_dict)
+    return augmenter(image=np.asarray(images), mask=label_image)
 
 
 class ChainedSegmentationSubmissionDatasetMaker(Dataset):
@@ -121,13 +105,11 @@ class ChainedSegmentationSubmissionDatasetMaker(Dataset):
         return len(self.id_list)
 
     def __getitem__(self, idx):
-
         id = self.id_list[idx]
 
         tensor_list = []
 
         for month_index, month_indicator in enumerate(self.month_selection):
-
             base_tensor = retrieve_tiff(self.testing_feature_path, id, str(month_index), self.band_selection)
 
             dictionary_tensor = {'image': base_tensor}  # Dict required for usage of torch transforms
@@ -140,18 +122,18 @@ class ChainedSegmentationSubmissionDatasetMaker(Dataset):
 
         return tensor_list
 
+
 def retrieve_tiff(feature_path, id, month, band_selection):
     if int(month) < 10:
         month = "0" + month
 
-    channel_count = len(band_selection)
+    channel_count = 15  # Since bands are removed later, we need to ensure 15 bands are always returned here.
 
     S1_path = osp.join(feature_path, f"{id}_S1_{month}.tif")
     S2_path = osp.join(feature_path, f"{id}_S2_{month}.tif")
 
     if not osp.exists(S2_path):
         return np.zeros((channel_count, 256, 256), dtype=np.float32)
-
 
     bands = []
 
@@ -161,9 +143,10 @@ def retrieve_tiff(feature_path, id, month, band_selection):
     S2_bands = rasterio.open(S2_path).read().astype(np.float32)
     bands.extend(S2_bands)
 
-    #feature_tensor = create_tensor_from_bands_list(bands)
+    # feature_tensor = create_tensor_from_bands_list(bands)
 
     return bands
+
 
 def select_bands(bands_to_keep):
     return nn.Sequential(
@@ -181,27 +164,32 @@ def select_bands(bands_to_keep):
         tf.DropBands(torch.device('cpu'), bands_to_keep)  # DROPS ALL BUT SPECIFIED bands_to_keep
     )
 
+
 class ChainedSegmenter(pl.LightningModule):
-    def __init__(self, band_model, month_model, learning_rate, loss_function, repair_mode):
+    def __init__(self, band_model, month_model, learning_rate, loss_function, repair_mode, band_count, month_count):
         super().__init__()
         self.band_model = band_model
         self.month_model = month_model
         self.learning_rate = learning_rate
         self.loss_function = loss_function
         self.repair_mode = repair_mode
+        self.band_count = band_count
+        self.month_count = month_count
 
     def training_step(self, batch, batch_idx):
         x, y = batch
 
+        normalizer = nn.BatchNorm2d(self.band_count).cuda()
+
         segmented_bands_list = []
-        for index, current_band in enumerate(torch.tensor_split(x, 12, dim=1)):
+        for index, current_band in enumerate(torch.tensor_split(x, self.month_count, dim=1)):
 
             if torch.sum(current_band) == 0:
                 batch_count = current_band.size(dim=0)
                 segmented_bands_list.append(torch.cuda.FloatTensor(batch_count, 1, 256, 256).fill_(0))
                 continue
 
-            result = self.band_model(current_band)
+            result = self.band_model(normalizer(current_band))
 
             segmented_bands_list.append(result)
 
@@ -216,15 +204,17 @@ class ChainedSegmenter(pl.LightningModule):
     def validation_step(self, batch, batch_idx):
         x, y = batch
 
+        normalizer = nn.BatchNorm2d(self.band_count).cuda()
+
         segmented_bands_list = []
-        for index, current_band in enumerate(torch.tensor_split(x, 12, dim=1)):
+        for index, current_band in enumerate(torch.tensor_split(x, self.month_count, dim=1)):
 
             if torch.sum(current_band) == 0:
                 batch_count = current_band.size(dim=0)
                 segmented_bands_list.append(torch.cuda.FloatTensor(batch_count, 1, 256, 256).fill_(0))
                 continue
 
-            result = self.band_model(current_band)
+            result = self.band_model(normalizer(current_band).to('cuda'))
             segmented_bands_list.append(result)
 
         month_tensor = torch.cat(segmented_bands_list, dim=1)
@@ -239,16 +229,17 @@ class ChainedSegmenter(pl.LightningModule):
         return [torch.optim.Adam(self.parameters(), lr=self.learning_rate)]
 
     def forward(self, x):
+        normalizer = nn.BatchNorm2d(self.band_count).cuda()
 
         segmented_bands_list = []
-        for index, current_band in enumerate(torch.tensor_split(x, 12, dim=1)):
+        for index, current_band in enumerate(torch.tensor_split(x, self.month_count, dim=1)):
 
             if torch.sum(current_band) == 0:
                 batch_count = current_band.size(dim=0)
                 segmented_bands_list.append(torch.cuda.FloatTensor(batch_count, 1, 256, 256).fill_(0))
                 continue
 
-            result = self.band_model(current_band)
+            result = self.band_model(normalizer(current_band).to('cuda'))
             segmented_bands_list.append(result)
 
         month_tensor = torch.cat(segmented_bands_list, dim=1)
@@ -374,7 +365,7 @@ def select_segmenter(segmenter_name, encoder_name, encoder_weights, channel_coun
 
 
 def create_tensor_from_bands_list(band_array):
-    #band_array = np.asarray(band_list, dtype=np.float32)
+    # band_array = np.asarray(band_list, dtype=np.float32)
 
     band_tensor = torch.tensor(band_array)
 
@@ -413,15 +404,13 @@ def train(args):
                                              args.month_encoder_weights_name,
                                              month_channel_count)
 
-    #month_segmenter_model=SqEx(12,12)
-    #month_segmenter_model = nn.MultiheadAttention(256, 1, batch_first=True)
-
-
     model = ChainedSegmenter(band_model=band_segmenter_model,
                              month_model=month_segmenter_model,
                              learning_rate=args.learning_rate,
                              loss_function=args.loss_function,
-                             repair_mode=args.missing_month_repair_mode)
+                             repair_mode=args.missing_month_repair_mode,
+                             band_count=len(args.band_selection),
+                             month_count=args.month_selection.count(1))
 
     logger = TensorBoardLogger("tb_logs", name=args.model_identifier)
 
@@ -531,25 +520,25 @@ def set_args():
     band_encoder = "efficientnet-b0"
     band_encoder_weights = "imagenet"
 
-    month_segmenter = "Unet++"
+    month_segmenter = "Unet"
     month_encoder = "efficientnet-b0"
     month_encoder_weights = "imagenet"
 
     data_type = "tiff"  # options are "npy" or "tiff"
     epochs = 100
     learning_rate = 1e-4
-    dataloader_workers = 12
+    dataloader_workers = 16
     validation_fraction = 0.2
-    batch_size = 8
+    batch_size = 1
     log_step_frequency = 50
     version = -1  # Keep -1 if loading the latest model version.
     save_top_k_checkpoints = 1
-    loss_function = loss_functions.rmse_loss
+    loss_function = loss_functions.logit_binary_cross_entropy_loss
 
     missing_month_repair_mode = "zeros"
 
-    multiprocessing_strategy = "ddp"  # replace with ddp if using more than 1 device
-    device_count = 2
+    multiprocessing_strategy = None  # replace with ddp if using more than 1 device
+    device_count = 1
 
     month_selection = {
         "September": 1,
@@ -633,7 +622,7 @@ def set_args():
     data_augmentation_pipeline = A.Compose([
         A.HorizontalFlip(p=0.5),
         A.VerticalFlip(p=0.5),
-    ], additional_targets=band_dict)
+    ])
 
     parser = argparse.ArgumentParser()
 
@@ -653,7 +642,7 @@ def set_args():
     data_path = osp.dirname(data.__file__)
     models_path = osp.dirname(models.__file__)
 
-    data_path = r"C:\Users\kuipe\Desktop\Epoch\forestbiomass\data"
+    # data_path = r"C:\Users\kuipe\Desktop\Epoch\forestbiomass\data"
 
     # Note: Converted data does not have an explicit label path, as labels are stored within training_features
     parser.add_argument('--converted_training_features_path', default=str(osp.join(data_path, "converted")), type=str)
@@ -664,7 +653,7 @@ def set_args():
     parser.add_argument('--tiff_training_labels_path', default=str(osp.join(data_path, "imgs", "train_agbm")))
     parser.add_argument('--tiff_testing_features_path', default=str(osp.join(data_path, "imgs", "test_features")))
 
-    parser.add_argument('--training_ids_path', default=str(osp.join(data_path, "patch_names")), type=str)
+    parser.add_argument('--training_ids_path', default=str(osp.join(data_path, "local_patch_names")), type=str)
     parser.add_argument('--testing_ids_path', default=str(osp.join(data_path, "test_patch_names")), type=str)
 
     parser.add_argument('--current_model_path', default=str(osp.join(models_path, "tb_logs", model_identifier)),
@@ -703,4 +692,4 @@ def set_args():
 if __name__ == '__main__':
     args = set_args()
     train(args)
-    #chained_experimental_submission(args)
+    # chained_experimental_submission(args)
