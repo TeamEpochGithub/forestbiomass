@@ -178,9 +178,9 @@ def train(args):
         callbacks=[checkpoint_callback],
         num_sanity_val_steps=0,
         accelerator='gpu',
-        devices=1,
+        devices=4,
         # num_nodes=4,
-        # strategy=ddp
+        strategy='dp'
     )
 
     trainer.fit(model, train_dataloaders=train_dataloader, val_dataloaders=valid_dataloader)
@@ -265,11 +265,11 @@ def set_args():
     model_encoder = "efficientnet-b2"
     model_encoder_weights = "imagenet"  # Leave None if not using weights.
     data_type = "tiff"  # options are "npy" or "tiff"
-    epochs = 1
+    epochs = 40
     learning_rate = 1e-4
-    dataloader_workers = 1
+    dataloader_workers = 32
     validation_fraction = 0.2
-    batch_size = 1
+    batch_size = 32
     log_step_frequency = 200
     version = -1  # Keep -1 if loading the latest model version.
     save_top_k_checkpoints = 3
@@ -359,7 +359,7 @@ def set_args():
 
 if __name__ == '__main__':
     args = set_args()
-    #_, score = train(args)
+    _, score = train(args)
     # print(score)
 
-    create_submissions(args)
+    # create_submissions(args)
