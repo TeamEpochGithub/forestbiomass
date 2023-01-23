@@ -22,8 +22,6 @@ conda activate forest
 ### ==============COMMENT OUT AFTER FIRST RUN==============
 conda install pytorch torchvision torchaudio pytorch-cuda=11.6 -c pytorch -c nvidia
 conda install -c default rasterio segmentation-models-pytorch pytorch-lightning torchgeo pillow gdal poppler
-conda install pip
-pip install autogluon.tabular[all]
 ### =======================================================
 
 srun python /home/ptempelman/forestbiomass/models/chained_segmenter_tiff.py
