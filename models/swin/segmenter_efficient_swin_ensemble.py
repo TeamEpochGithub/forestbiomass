@@ -24,6 +24,7 @@ from models.utils.warmup_scheduler.scheduler import GradualWarmupScheduler
 from ensemble_model import Ensemble_Model
 from models.swin.efficientnet_swin import Efficient_Swin
 from res_swin_v2 import Res_Swin
+import models.tb_logs as mtb
 
 warnings.filterwarnings("ignore", category=rasterio.errors.NotGeoreferencedWarning)
 
@@ -192,8 +193,10 @@ def train(args):
     valid_dataloader = DataLoader(val_set, batch_size=args.batch_size, shuffle=False,
                                   num_workers=args.dataloader_workers)
 
+    efficient_ckpt_path = osp.join(osp.dirname(mtb.__file__), 'epoch=105-step=51834.ckpt')
+    res_ckpt_path = osp.join(osp.dirname(mtb.__file__), 'epoch=66-step=30954.ckpt')
     # base_model = select_segmenter(args.encoder_weights, args.segmenter_name, args.encoder_name, len(args.bands_to_keep))
-    base_model = Ensemble_Model(r'C:\Users\kuipe\OneDrive\Bureaublad\Epoch\forestbiomass\models\tb_logs\epoch=105-step=51834.ckpt', r'C:\Users\kuipe\OneDrive\Bureaublad\Epoch\forestbiomass\models\tb_logs\epoch=66-step=30954.ckpt', args)
+    base_model = Ensemble_Model(efficient_ckpt_path, res_ckpt_path, args)
 
     model = Sentinel2Model(model=base_model, epochs=args.epochs, warmup_epochs=args.warmup_epochs, learning_rate=args.learning_rate, weight_decay=args.weight_decay, loss_function=args.train_loss_function)
 
@@ -235,7 +238,10 @@ def load_model(args):
     latest_checkpoint_name = list(os.scandir(checkpoint_dir_path))[0]
     latest_checkpoint_path = osp.join(checkpoint_dir_path, latest_checkpoint_name)
 
-    base_model = Ensemble_Model(r'C:\Users\kuipe\OneDrive\Bureaublad\Epoch\forestbiomass\models\tb_logs\epoch=105-step=51834.ckpt', r'C:\Users\kuipe\OneDrive\Bureaublad\Epoch\forestbiomass\models\tb_logs\epoch=66-step=30954.ckpt', args)
+    efficient_ckpt_path = osp.join(osp.dirname(mtb.__file__), 'epoch=105-step=51834.ckpt')
+    res_ckpt_path = osp.join(osp.dirname(mtb.__file__), 'epoch=66-step=30954.ckpt')
+    # base_model = select_segmenter(args.encoder_weights, args.segmenter_name, args.encoder_name, len(args.bands_to_keep))
+    base_model = Ensemble_Model(efficient_ckpt_path, res_ckpt_path, args)
 
     # This block might be redundant if we can download weights via the python segmentation models library.
     # However, it might be that not all weights are available this way.
