@@ -361,13 +361,13 @@ def set_args():
     data_path = osp.dirname(data.__file__)
     models_path = osp.dirname(models.__file__)
     # data_path = r"C:\Users\Team Epoch A\Documents\Epoch III\forestbiomass\data"
-    data_path = r"C:\Users\kuipe\OneDrive\Bureaublad\Epoch\forestbiomass\data"
+    # data_path = r"C:\Users\kuipe\OneDrive\Bureaublad\Epoch\forestbiomass\data"
 
     parser.add_argument('--tiff_training_features_path', default=str(osp.join(data_path, "imgs", "train_features")))
     parser.add_argument('--tiff_training_labels_path', default=str(osp.join(data_path, "imgs", "train_agbm")))
     parser.add_argument('--tiff_testing_features_path', default=str(osp.join(data_path, "imgs", "test_features")))
 
-    parser.add_argument('--training_ids_path', default=str(osp.join(data_path, "test_trans_patch")), type=str)
+    parser.add_argument('--training_ids_path', default=str(osp.join(data_path, "patch_names")), type=str)
     parser.add_argument('--testing_ids_path', default=str(osp.join(data_path, "test_patch_names")), type=str)
     parser.add_argument('--current_model_path', default=str(osp.join(models_path, "tb_logs", model_identifier)),
                         type=str)

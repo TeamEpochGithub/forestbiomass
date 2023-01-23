@@ -25,5 +25,5 @@ conda activate forest
 ### =======================================================
 
 
-srun python ../../models/swin/segmenter_efficient_swin.py
+srun python ../../models/swin/segmenter_efficient_swin_ensemble.py
 conda deactivate
