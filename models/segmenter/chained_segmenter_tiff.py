@@ -1,12 +1,9 @@
 import itertools
 import operator
-import sys
 
 import torch
 from PIL import Image
-import numpy
 from torch.utils.data import Dataset, DataLoader
-from torch import distributed as dist
 import segmentation_models_pytorch as smp
 import os
 import rasterio
@@ -43,7 +40,6 @@ class ChainedSegmentationDatasetMaker(Dataset):
         return len(self.id_list)
 
     def __getitem__(self, idx):
-
         id = self.id_list[idx]
 
         label_path = osp.join(self.training_labels_path, f"{id}_agbm.tif")
@@ -52,7 +48,6 @@ class ChainedSegmentationDatasetMaker(Dataset):
         tensor_list = []
 
         for month_index, month_indicator in enumerate(self.month_selection):
-
             feature_tensor = retrieve_tiff(self.training_feature_path, id, str(month_index), self.S1_bands,
                                            self.S2_bands)
 
@@ -77,18 +72,17 @@ class ChainedSegmentationSubmissionDatasetMaker(Dataset):
         return len(self.id_list)
 
     def __getitem__(self, idx):
-
         id = self.id_list[idx]
 
         tensor_list = []
 
         for month_index, month_indicator in enumerate(self.month_selection):
-
             feature_tensor = retrieve_tiff(self.testing_feature_path, id, str(month_index), self.S1_bands,
                                            self.S2_bands)
             tensor_list.append(feature_tensor)
 
         return tensor_list
+
 
 def retrieve_tiff(feature_path, id, month, S1_band_selection, S2_band_selection):
     if int(month) < 10:
@@ -147,7 +141,7 @@ class ChainedSegmenter(pl.LightningModule):
 
         y_hat = self.month_model(month_tensor)
         loss = self.loss_function(y_hat, y)
-        self.log("train/loss", loss)
+        self.log("train/loss", loss) # , on_step=True, on_epoch=True, prog_bar=True, logger=True)
 
         return loss
 
@@ -169,7 +163,7 @@ class ChainedSegmenter(pl.LightningModule):
 
         y_hat = self.month_model(month_tensor)
         loss = self.loss_function(y_hat, y)
-        self.log("val/loss", loss)
+        self.log("val/loss", loss) #, on_step=True, on_epoch=True, prog_bar=True, logger=True)
 
         return loss
 
@@ -201,7 +195,6 @@ def prepare_dataset_training(args):
         reader = csv.reader(f)
         patch_name_data = list(reader)
     chip_ids = patch_name_data[0]
-
 
     training_features_path = args.tiff_training_features_path
 
@@ -305,7 +298,8 @@ def train(args):
 
     trainer = Trainer(
         accelerator="gpu",
-        devices=1,
+        devices=2,
+        strategy='dp',
         max_epochs=args.epochs,
         logger=[logger],
         log_every_n_steps=args.log_step_frequency,
@@ -420,6 +414,7 @@ def create_submissions(args):
         if index % 100 == 0:
             print(f"{index} / {total}")
 
+
 # Source: https://stackoverflow.com/a/2249060/14633351
 def accumulate_predictions(l):
     it = itertools.groupby(l, operator.itemgetter(0))
@@ -497,12 +492,12 @@ def set_args():
     month_encoder_weights = "imagenet"
 
     data_type = "tiff"  # options are "npy" or "tiff"
-    epochs = 20
-    learning_rate = 1e-4
-    dataloader_workers = 12
+    epochs = 40
+    learning_rate = 1e-5
+    dataloader_workers = 44
     validation_fraction = 0.2
-    batch_size = 1
-    log_step_frequency = 10
+    batch_size = 16
+    log_step_frequency = 3
     version = -1  # Keep -1 if loading the latest model version.
     save_top_k_checkpoints = 3
     loss_function = loss_functions.rmse_loss

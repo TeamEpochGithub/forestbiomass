@@ -2,7 +2,7 @@ from csv import writer
 import os.path as osp
 import numpy as np
 
-from models.segmenter import set_args, train
+from models.segmenter.segmenter import set_args, train
 import random as r
 
 from models.utils import loss_functions
@@ -28,11 +28,11 @@ def evaluate_segmentation_parameter(parameters, iterations=3, epochs=3):
 
         random_identifier = r.randint(10000, 99999)
 
-        with open('tuning_results_identifiers', 'a+', newline='') as f:
+        with open('../tuning_results_identifiers', 'a+', newline='') as f:
             append_writer = writer(f)
             append_writer.writerow([mean_score, random_identifier])
 
-        with open(osp.join('tuning_results', str(random_identifier)), 'x', newline='') as f:
+        with open(osp.join('../tuning_results', str(random_identifier)), 'x', newline='') as f:
             append_writer = writer(f)
             append_writer.writerow([f"{getattr(args, arg)}" for arg in vars(args)])
 
