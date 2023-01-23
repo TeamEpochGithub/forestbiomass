@@ -46,10 +46,10 @@ def extract_metadata_batch(batch):
         batch_metadata.append(patch_metadata)
     return torch.FloatTensor(batch_metadata)
 
+
 if __name__ == '__main__':
     # very_corrupted = torch.zeros(16, 180, 256, 256)
     # print(extract_metadata_batch(very_corrupted))
 
     non_corrupted = torch.rand(16, 180, 256, 256)
     print(extract_metadata_batch(non_corrupted).shape)
-
