@@ -392,10 +392,10 @@ def train(args):
                                             args.band_encoder_weights_name,
                                             band_channel_count)
 
-    month_segmenter_model = select_segmenter(args.month_segmenter_name,
-                                             args.month_encoder_name,
-                                             args.month_encoder_weights_name,
-                                             month_channel_count)
+    # month_segmenter_model = select_segmenter(args.month_segmenter_name,
+    #                                          args.month_encoder_name,
+    #                                          args.month_encoder_weights_name,
+    #                                          month_channel_count)
     # month_segmenter_model=SqEx(12,12)
     month_segmenter_model = nn.MultiheadAttention(256, 1, batch_first=True)
 
@@ -678,7 +678,7 @@ def chained_experimental_submission(args):
 
 def set_args():
     band_segmenter = "Unet"
-    band_encoder = "efficientnet-b1"
+    band_encoder = "efficientnet-b2"
     band_encoder_weights = "imagenet"
 
     month_segmenter = "Unet"
@@ -822,5 +822,5 @@ def set_args():
 
 if __name__ == '__main__':
     args = set_args()
-    train(args)
+    #train(args)
     chained_experimental_submission(args)

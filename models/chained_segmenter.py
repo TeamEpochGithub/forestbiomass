@@ -58,7 +58,6 @@ class ChainedSegmentationDatasetMaker(Dataset):
 
         label_path = osp.join(self.training_labels_path, f"{id}_agbm.tif")
         label_image = rasterio.open(label_path).read().astype(np.float32)
-        label_tensor = torch.tensor(label_image)
 
         all_bands = []
 
@@ -68,17 +67,27 @@ class ChainedSegmentationDatasetMaker(Dataset):
 
             all_bands.extend(band_images)
 
-        combined_tensor = albumentation_input_wrapper(all_bands, label_image, args.data_augmentation_pipeline)
+        transformed_images_dict = albumentation_input_wrapper(all_bands, label_image, self.data_augmentation_pipeline)
+
+        transformed_images_list = list(transformed_images_dict.values())
+
+        transformed_label_image = transformed_images_list.pop()  # The label is the last image processed.
+
+        label_tensor = torch.from_numpy(np.asarray(transformed_label_image, dtype=np.float32).copy())
 
         tensor_list = []
 
-        for index, current_band in enumerate(torch.tensor_split(combined_tensor, len(self.month_selection), dim=0)):
+        for index, current_band in enumerate(np.array_split(np.asarray(transformed_images_list), len(self.month_selection))):
 
-            dictionary_tensor = {'image': current_band}
+            normalized_tensors = create_tensor_from_bands_list(current_band)
 
-            expanded_tensor = select_bands(bands_to_keep=self.band_selection)(dictionary_tensor)
+            dictionary_tensor = {'image': normalized_tensors}
+
+            expanded_tensor = select_bands(bands_to_keep=self.band_selection)(dictionary_tensor)['image']
 
             tensor_list.append(expanded_tensor)
+
+        tensor_list = torch.cat(tensor_list, dim=0)
 
         return tensor_list, label_tensor
 
@@ -141,7 +150,8 @@ def retrieve_tiff(feature_path, id, month, band_selection):
     S2_path = osp.join(feature_path, f"{id}_S2_{month}.tif")
 
     if not osp.exists(S2_path):
-        create_tensor_from_bands_list(np.zeros((channel_count, 256, 256), dtype=np.float32))
+        return np.zeros((channel_count, 256, 256), dtype=np.float32)
+
 
     bands = []
 
@@ -192,6 +202,7 @@ class ChainedSegmenter(pl.LightningModule):
                 continue
 
             result = self.band_model(current_band)
+
             segmented_bands_list.append(result)
 
         month_tensor = torch.cat(segmented_bands_list, dim=1)
@@ -362,8 +373,8 @@ def select_segmenter(segmenter_name, encoder_name, encoder_weights, channel_coun
     return base_model
 
 
-def create_tensor_from_bands_list(band_list):
-    band_array = np.asarray(band_list, dtype=np.float32)
+def create_tensor_from_bands_list(band_array):
+    #band_array = np.asarray(band_list, dtype=np.float32)
 
     band_tensor = torch.tensor(band_array)
 
@@ -516,7 +527,7 @@ def submission_generator(args):
 
 
 def set_args():
-    band_segmenter = "Unet++"
+    band_segmenter = "Unet"
     band_encoder = "efficientnet-b0"
     band_encoder_weights = "imagenet"
 
@@ -537,8 +548,8 @@ def set_args():
 
     missing_month_repair_mode = "zeros"
 
-    multiprocessing_strategy = None  # replace with ddp if using more that 1 device
-    device_count = 1
+    multiprocessing_strategy = "ddp"  # replace with ddp if using more than 1 device
+    device_count = 2
 
     month_selection = {
         "September": 1,
@@ -589,7 +600,7 @@ def set_args():
         23: 'S2-VV/VH-Desc: Cband-10m'
     }
 
-    band_selection = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23]
+    band_selection = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 11, 12, 13, 14]
 
     band_indicator = ["1" if k in band_selection else "0" for k, v in band_map.items()]
     band_indicator.insert(11, "-")
@@ -615,17 +626,13 @@ def set_args():
     band_dict = {}
 
     for i in range(0, len(band_selection) * len(month_selection)):
-        if i == 0:
-            band_dict['image'] = 'image'
-        else:
-            band_dict[f'image{i}'] = 'image'
+        band_dict[f'image{i}'] = 'image'
 
     band_dict['mask'] = 'mask'
 
     data_augmentation_pipeline = A.Compose([
         A.HorizontalFlip(p=0.5),
         A.VerticalFlip(p=0.5),
-        ToTensorV2()
     ], additional_targets=band_dict)
 
     parser = argparse.ArgumentParser()
@@ -646,7 +653,7 @@ def set_args():
     data_path = osp.dirname(data.__file__)
     models_path = osp.dirname(models.__file__)
 
-    #data_path = r"C:\Users\kuipe\Desktop\Epoch\forestbiomass\data"
+    data_path = r"C:\Users\kuipe\Desktop\Epoch\forestbiomass\data"
 
     # Note: Converted data does not have an explicit label path, as labels are stored within training_features
     parser.add_argument('--converted_training_features_path', default=str(osp.join(data_path, "converted")), type=str)
