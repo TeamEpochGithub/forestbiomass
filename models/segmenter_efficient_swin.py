@@ -195,7 +195,7 @@ def load_model(args):
     version_dir = list(os.scandir(log_folder_path))[args.model_version]
 
     checkpoint_dir_path = osp.join(log_folder_path, version_dir, "checkpoints")
-    latest_checkpoint_name = list(os.scandir(checkpoint_dir_path))[-1]
+    latest_checkpoint_name = list(os.scandir(checkpoint_dir_path))[0]
     latest_checkpoint_path = osp.join(checkpoint_dir_path, latest_checkpoint_name)
 
     base_model = Efficient_Swin()
@@ -262,7 +262,7 @@ def set_args():
     warmup_epochs = 20
     learning_rate = 3e-4
     weight_decay = 5e-5
-    dataloader_workers = 48
+    dataloader_workers = 8
     validation_fraction = 0.1
     batch_size = 16
     log_step_frequency = 200

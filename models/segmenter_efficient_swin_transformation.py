@@ -70,13 +70,11 @@ class Sentinel2Model(pl.LightningModule):
 
 
 def prepare_dataset_training(args):
-    print('hello')
     with open(args.training_ids_path, newline='') as f:
         reader = csv.reader(f)
-        # print(list(reader))
         patch_name_data = list(reader)
     chip_ids = patch_name_data[0]
-    print('hello')
+
     training_features_path = args.tiff_training_features_path
 
     corrupted_transform_method, transform_channels = tf.select_transform_method(args.transform_method,
@@ -155,7 +153,7 @@ def train(args):
     print("Getting train data...")
 
     train_dataset = prepare_dataset_training(args)
-    print('hello')
+
     train_size = int((1 - args.validation_fraction) * len(train_dataset))
     valid_size = len(train_dataset) - train_size
 
@@ -165,7 +163,7 @@ def train(args):
                                   num_workers=args.dataloader_workers)
     valid_dataloader = DataLoader(val_set, batch_size=args.batch_size, shuffle=False,
                                   num_workers=args.dataloader_workers)
-    print('hello')
+
     # base_model = select_segmenter(args.encoder_weights, args.segmenter_name, args.encoder_name, len(args.bands_to_keep))
     base_model = Efficient_Swin()
 
@@ -186,8 +184,8 @@ def train(args):
         log_every_n_steps=args.log_step_frequency,
         callbacks=[checkpoint_callback],
         num_sanity_val_steps=0,
-        accelerator='cpu',
-        devices=2,
+        accelerator='gpu',
+        devices=1,
         # num_nodes=4,
         # strategy=ddp
     )
@@ -273,9 +271,9 @@ def set_args():
     warmup_epochs = 20
     learning_rate = 3e-4
     weight_decay = 5e-5
-    dataloader_workers = 48
+    dataloader_workers = 8
     validation_fraction = 0.1
-    batch_size = 1
+    batch_size = 16
     log_step_frequency = 200
     version = -1  # Keep -1 if loading the latest model version.
     save_top_k_checkpoints = 3
@@ -363,7 +361,7 @@ def set_args():
     parser.add_argument('--tiff_training_labels_path', default=str(osp.join(data_path, "imgs", "train_agbm")))
     parser.add_argument('--tiff_testing_features_path', default=str(osp.join(data_path, "imgs", "test_features")))
 
-    parser.add_argument('--training_ids_path', default=str(osp.join(data_path, "test_trans_patch")), type=str)
+    parser.add_argument('--training_ids_path', default=str(osp.join(data_path, "patch_names")), type=str)
     parser.add_argument('--testing_ids_path', default=str(osp.join(data_path, "test_patch_names")), type=str)
     parser.add_argument('--current_model_path', default=str(osp.join(models_path, "tb_logs", model_identifier)),
                         type=str)
