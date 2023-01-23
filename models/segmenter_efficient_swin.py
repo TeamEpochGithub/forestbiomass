@@ -262,7 +262,7 @@ def set_args():
     warmup_epochs = 20
     learning_rate = 3e-4
     weight_decay = 5e-5
-    dataloader_workers = 4
+    dataloader_workers = 48
     validation_fraction = 0.1
     batch_size = 16
     log_step_frequency = 200
@@ -323,7 +323,7 @@ def set_args():
 
     data_path = osp.dirname(data.__file__)
     models_path = osp.dirname(models.__file__)
-    data_path = r"C:\Users\Team Epoch A\Documents\Epoch III\forestbiomass\data"
+    # data_path = r"C:\Users\Team Epoch A\Documents\Epoch III\forestbiomass\data"
 
     parser.add_argument('--tiff_training_features_path', default=str(osp.join(data_path, "imgs", "train_features")))
     parser.add_argument('--tiff_training_labels_path', default=str(osp.join(data_path, "imgs", "train_agbm")))
