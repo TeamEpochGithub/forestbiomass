@@ -1,6 +1,6 @@
 import torch
 import torch.nn as nn
-from efficientnet_swin import Efficient_Swin
+from models.swin.efficientnet_swin import Efficient_Swin
 from res_swin_v2 import Res_Swin
 
 class Conv_3(nn.Module):
@@ -19,14 +19,14 @@ class Ensemble_Model(nn.Module):
     def __init__(self, path_efficient, path_resnet):
         super().__init__()
         self.model1 = Efficient_Swin()
-        checkpoint1 = torch.load(str(path_efficient))
+        checkpoint1 = torch.load(str(path_efficient), map_location=torch.device('cpu'))
         self.model1.load_state_dict(checkpoint1["state_dict"])
         self.model2 = Res_Swin()
-        checkpoint2 = torch.load(str(path_resnet))
+        checkpoint2 = torch.load(str(path_resnet), map_location=torch.device('cpu'))
         self.model2.load_state_dict(checkpoint2["state_dict"])
         self.conv1 = Conv_3(2, 1, 1, 1, 0)
         self.ff = nn.Conv2d(1, 1, 1, 1, 0)
-    
+
     def forward(self, x):
         x1 = self.model1(x)
         x2 = self.model2(x)
