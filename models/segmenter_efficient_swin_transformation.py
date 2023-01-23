@@ -271,7 +271,7 @@ def set_args():
     warmup_epochs = 20
     learning_rate = 3e-4
     weight_decay = 5e-5
-    dataloader_workers = 4
+    dataloader_workers = 8
     validation_fraction = 0.1
     batch_size = 16
     log_step_frequency = 200
@@ -337,8 +337,8 @@ def set_args():
         23: 'S2-VV/VH-Desc: Cband-10m'
     }
 
-    bands_to_keep = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23]
-    # bands_to_keep = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 11, 12, 13, 14]
+    # bands_to_keep = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23]
+    bands_to_keep = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 11, 12, 13, 14]
     band_indicator = ["1" if k in bands_to_keep else "0" for k, v in band_map.items()]
 
     parser = argparse.ArgumentParser()
