@@ -2,14 +2,13 @@
 #
 #SBATCH --job-name="EpochIII"
 #SBATCH --time=24:00:00
-#SBATCH --partition=gpu
+#SBATCH --partition=memory
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=48
-#SBATCH --gpus-per-task=2
-#SBATCH --mem-per-cpu=4G
+#SBATCH --mem=400G
 #SBATCH --account=research-eemcs-insy
 
-module load 2022r2 miniconda3 py-pip/21.1.2
+module load 2022r2 miniconda3
 unset CONDA_SHLVL
 source "$(conda info --base)/etc/profile.d/conda.sh"
 
@@ -22,7 +21,9 @@ conda activate forest
 ### ==============COMMENT OUT AFTER FIRST RUN==============
 conda install pytorch torchvision torchaudio pytorch-cuda=11.6 -c pytorch -c nvidia
 conda install -c default rasterio segmentation-models-pytorch pytorch-lightning torchgeo pillow gdal poppler
+conda install pip
+pip install autogluon.tabular[all]
 ### =======================================================
 
-srun python /home/ptempelman/forestbiomass/models/chained_segmenter_tiff.py
+srun python ../../models/autogluon_train.py
 conda deactivate
