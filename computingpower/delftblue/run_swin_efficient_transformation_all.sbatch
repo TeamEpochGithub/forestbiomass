@@ -9,7 +9,7 @@
 #SBATCH --mem-per-cpu=2G
 #SBATCH --account=research-eemcs-insy
 
-module load 2022r2 miniconda3
+module load 2022r2 miniconda3 py-pip/21.1.2
 unset CONDA_SHLVL
 source "$(conda info --base)/etc/profile.d/conda.sh"
 
@@ -20,9 +20,8 @@ source "$(conda info --base)/etc/profile.d/conda.sh"
 conda activate forest
 
 ### ==============COMMENT OUT AFTER FIRST RUN==============
-conda install pytorch==1.10.0 torchvision==0.11.0 torchaudio==0.10.0 cudatoolkit=10.2 -c pytorch
-conda install -c default rasterio segmentation-models-pytorch pytorch-lightning torchgeo pillow gdal poppler
+#conda install pytorch torchvision torchaudio pytorch-cuda=11.6 -c pytorch -c nvidia
+#conda install -c default rasterio segmentation-models-pytorch pytorch-lightning torchgeo pillow gdal poppler
 ### =======================================================
-
 srun python ../../models/segmenter_efficient_swin_transformation_all.py
 conda deactivate
