@@ -141,7 +141,7 @@ def prepare_dataset_testing(args):
                                                   args.data_type,
                                                   args.S1_band_selection,
                                                   args.S2_band_selection,
-                                                  args.month_selection)
+                                                  args.month_selection,test=True)
 
     return new_dataset
 
@@ -205,10 +205,9 @@ def train(args,train_set,save_path):
     #predictor = TabularPredictor(label="target", problem_type="regression", path=save_path,eval_metric = metric).fit(X, time_limit=60*60*12, presets='best_quality', holdout_frac=0.05,num_cpus=12)
     predictor = TabularPredictor(label="target", problem_type="regression", path=save_path,eval_metric = metric).fit(
     train_data,
-    presets='best_quality',
-    # hyperparameters = 'light'
+    presets='good_quality',
     hyperparameters={
-        KNNRapidsModel: {},
+        # KNNRapidsModel: {},
         LinearRapidsModel: {},
         'RF': {},
         'KNN': {},
@@ -216,7 +215,7 @@ def train(args,train_set,save_path):
         'CAT': {'ag_args_fit': {}},
         'GBM': [{}, {'extra_trees': True, 'ag_args': {'name_suffix': 'XT'}}, 'GBMLarge'],
         'FASTAI': {'ag_args_fit': {}},
-    }, 
+    },
    keep_only_best=True, save_space=True, holdout_frac=0.10, use_bag_holdout=True, num_cpus=12, time_limit=60*60*24,
 )
 
@@ -254,31 +253,41 @@ def test(args,val_set,save_path):
     perf = predictor.evaluate_predictions(y_true=test_data["target"], y_pred=y_pred, auxiliary_metrics=True)
     print(perf)
     print(predictor.leaderboard(test_data, silent=True))
-    print(predictor.feature_importance(test_data))
+    # print(predictor.feature_importance(test_data))
 
 def submission(args,test_set,save_path):
     test_dataloader = DataLoader(test_set, batch_size=args.batch_size, shuffle=True,
                                   num_workers=args.dataloader_workers)
     predictor = TabularPredictor.load(save_path)
-    test_data_nolab=[]
-    for (x, y) in tqdm(test_dataloader):
-        test_data_nolab.append(x.detach().cpu().numpy().reshape(x.shape[1],-1).transpose(1,0))
-    test_data_nolab=np.array(test_data_nolab)  
-    test_data_nolab=test_data_nolab.reshape(test_data_nolab.shape[0]*test_data_nolab.shape[1],test_data_nolab.shape[2])
-    test_data_nolab = pd.DataFrame(test_data_nolab)
-    y_pred = predictor.predict(test_data_nolab)
-    print("Predictions:  \n", y_pred)
-    y_pred=y_pred.reshape(256,256,-1).permute(1,0)
-    with open(args.testing_ids_path, newline='') as f:
-        reader = csv.reader(f)
-        patch_name_data = list(reader)
-    ids = patch_name_data[0]
-    for i,current_tensor in enumerate(y_pred):
-        current_id=ids[i]
-        agbm_path = osp.join(args.submission_folder_path, f"{current_id}_agbm.tif")
-        im = Image.fromarray(current_tensor)
-        im.save(agbm_path)
-    return y_pred
+    step=100
+    for lower in range(400,2800,step):
+        print(lower)
+        upper=lower+step
+        test_data_nolab=[]
+        c=0
+        for (x,_) in tqdm(test_dataloader):
+            test_data_nolab.append(x.detach().cpu().numpy().reshape(x.shape[1],-1).transpose(1,0))
+            c+=1
+            if c<lower:
+                continue
+            if c>upper:
+                break
+        test_data_nolab=np.array(test_data_nolab)  
+        test_data_nolab=test_data_nolab.reshape(test_data_nolab.shape[0]*test_data_nolab.shape[1],test_data_nolab.shape[2])
+        test_data_nolab = pd.DataFrame(test_data_nolab)
+        y_pred = predictor.predict(test_data_nolab)
+        print("Predictions:  \n", y_pred)
+        y_pred=y_pred.reshape(256,256,-1).permute(1,0)
+        with open(args.testing_ids_path, newline='') as f:
+            reader = csv.reader(f)
+            patch_name_data = list(reader)
+        ids = patch_name_data[0]
+        for i,current_tensor in enumerate(y_pred):
+            current_id=ids[i]
+            agbm_path = osp.join(args.submission_folder_path, f"{current_id}_agbm.tif")
+            im = Image.fromarray(current_tensor)
+            im.save(agbm_path)
+    return True
 
 def create_tensor_from_bands_list(band_list):
     band_array = np.asarray(band_list, dtype=np.float32)
@@ -488,7 +497,7 @@ if __name__ == "__main__":
     train_size = int((1 - args.validation_fraction) * len(train_dataset))
     valid_size = len(train_dataset) - train_size
     train_set, val_set = torch.utils.data.random_split(train_dataset, [train_size, valid_size])
-    save_path = 'agModels_efficent_2'  # specifies folder to store trained models
+    save_path = 'agModels_good_efficent'  # specifies folder to store trained models
     train(args,train_set,save_path)
     test(args,val_set,save_path)
     submission(args,test_set,save_path)

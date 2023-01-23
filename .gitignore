@@ -6,11 +6,9 @@ data/forest-biomass
 data/forest-biomass-test
 models/vit_checkpoints
 models/tb_logs
-agModels/**
-agModels_2/**
-agModels_3/**
-agModels_efficent/**
-agModels_efficent_2/**
+agModels**/**
+tb_logs**/**
+wandb**/**
 .conda/**
 
 # Byte-compiled / optimized / DLL files
