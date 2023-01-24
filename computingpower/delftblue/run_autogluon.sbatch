@@ -25,5 +25,5 @@ conda install pip
 pip install autogluon.tabular[all]
 ### =======================================================
 
-srun python ../../models/autogluon_train.py
+srun python ../../models/autogluon_train_cpu.py
 conda deactivate
