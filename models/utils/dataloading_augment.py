@@ -1,3 +1,6 @@
+import random
+import sys
+
 import rasterio
 from torch import nn
 from torchgeo.transforms import indices
@@ -112,8 +115,10 @@ def create_tensor(band_list):
 
     return band_tensor
 
+
 class SentinelTiffDataloader(Dataset):
-    def __init__(self, training_feature_path, training_labels_path, id_month_list, bands_to_keep, corrupted_transform_method):
+    def __init__(self, training_feature_path, training_labels_path, id_month_list, bands_to_keep,
+                 corrupted_transform_method):
         self.training_feature_path = training_feature_path
         self.training_labels_path = training_labels_path
         self.id_month_list = id_month_list
@@ -124,7 +129,6 @@ class SentinelTiffDataloader(Dataset):
         return len(self.id_month_list)
 
     def __getitem__(self, idx):
-
         current_id, month = self.id_month_list[idx]
 
         label_path = osp.join(self.training_labels_path, f"{current_id}_agbm.tif")
@@ -132,7 +136,7 @@ class SentinelTiffDataloader(Dataset):
 
         feature_tensor = retrieve_tiff(self.training_feature_path, current_id, month)
 
-        sample = {'image': feature_tensor, 'label': label_tensor}
+        sample = {'image': feature_tensor}
 
         selected_tensor = apply_transforms(bands_to_keep=self.bands_to_keep,
                                            corrupted_transform_method=self.corrupted_transform_method)(sample)
@@ -144,14 +148,14 @@ class SentinelTiffDataloader(Dataset):
 
 class SentinelTiffDataloader_all(Dataset):
     def __init__(self, training_feature_path, training_labels_path, chip_ids, bands_to_keep, corrupted_transform_method,
-                 channel_num,):
+                 channel_num, augment):
         self.training_feature_path = training_feature_path
         self.training_labels_path = training_labels_path
         self.chip_ids = chip_ids
         self.bands_to_keep = bands_to_keep
         self.corrupted_transform_method = corrupted_transform_method
         self.channel_num = channel_num
-
+        self.augment = augment
 
     def __len__(self):
         return len(self.chip_ids)
@@ -172,7 +176,9 @@ class SentinelTiffDataloader_all(Dataset):
                 # bands_list = retrieve_tiff(self.training_feature_path, current_id, month, self.augment)
                 feature_tensor = retrieve_tiff(self.training_feature_path, current_id, month)
                 sample = {'image': feature_tensor, 'label': label_tensor}
-
+                # augmented_tensor = self.augment(image=bands_list, label=label)
+                # print(type(augmented_tensor['label']))
+                # sample = {'image': augmented_tensor['image'], 'label': torch.tensor(augmented_tensor['label'])}
                 selected_tensor = apply_transforms(bands_to_keep=self.bands_to_keep,
                                                    corrupted_transform_method=self.corrupted_transform_method)(sample)
                 if times == 0:
@@ -193,8 +199,13 @@ class SentinelTiffDataloader_all(Dataset):
 
             # flip horiaon vertical
             # frid
+        label_tensor_npy = selected_tensor['label'].detach().cpu().numpy()
+        data_tensor_npy = data_tensor.detach().cpu().numpy()
+        data_tensor_npy = np.transpose(np.array(data_tensor_npy), (1, 2, 0))
+        augmented_tensor = self.augment(image=data_tensor_npy, label=label_tensor_npy)
+        return augmented_tensor['image'], augmented_tensor['label']
 
-        return data_tensor, label_tensor
+        # return data_tensor, label_tensor
 
 
 class SentinelTiffDataloaderSubmission(Dataset):
@@ -274,9 +285,14 @@ def retrieve_tiff(feature_path, id, month) -> torch.Tensor:
     S2_bands = rasterio.open(S2_path).read().astype(np.float32)
     bands.extend(S2_bands)
 
+    # bands = np.transpose(np.array(bands), (1, 2, 0))
+
+    # feature_tensor = augment(bands)
     feature_tensor = create_tensor(bands)
 
     return feature_tensor
+    # return bands
+
 
 def apply_transforms(corrupted_transform_method, bands_to_keep):
     return nn.Sequential(
@@ -295,6 +311,7 @@ def apply_transforms(corrupted_transform_method, bands_to_keep):
         tf.DropBands(torch.device('cpu'), bands_to_keep),  # DROPS ALL BUT SPECIFIED bands_to_keep
         corrupted_transform_method  # Applies corrupted band transformation
     )
+
 
 def apply_transforms_testing(corrupted_transform_method, bands_to_keep):
     return nn.Sequential(
