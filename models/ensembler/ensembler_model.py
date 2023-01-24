@@ -6,18 +6,24 @@
 # 	- x1 * (inference swin_transformer) + x2 * (inference segmenter) + x3 *  (inference pixel_wise)
 # 	- then calculate and backpropagate model over ensemble_model
 import numpy as np
+import pandas as pd
+import rasterio
 import torch
 from torch import nn
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
-from models.ensembler.extract_metadata import extract_metadata_batch
+import data
+from data import imgs
 from models.ensembler.patchnames_dataloader import PatchNameDatasetTrain
-from models.ensembler.universal_dataloader import UniversalDatasetTrain
 from models.utils.loss_functions import rmse_loss
+import os.path as osp
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
+metadata_df = pd.read_csv(osp.join(osp.dirname(data.__file__), "corruptedness_values.csv"))
+metadata_df.columns = ["patch_name", "corruptedness_values"]
+metadata_dict = dict(zip(list(metadata_df.patch_name), list(metadata_df.corruptedness_values)))
 
 def bar(curr_step, total_steps, bar_length=30):
     """
@@ -46,21 +52,24 @@ def train_and_eval(model, train_loader, valid_loader, optimizer, criterion, epoc
         # Training loop
         model.train()
         train_loss = []
-        for step, (patch_name, agbm) in enumerate(train_loader):
+        for step, (patch_names_batch, agbms_batch) in enumerate(train_loader):
             # ======== TRAINING ========
-            metadata = extract_metadata_batch(patch_name)
+            # metadata = extract_metadata_batch
+            metadata = retrieve_metadata_batch(patch_names_batch)
 
             # 1. Move the tensors to the configured device.
             # metadata, agbm, patch_name = metadata.to(DEVICE), agbm.to(DEVICE), patch_name.to(DEVICE)
             # 2. Forward pass by passing the images through the model.
             w1, w2, w3 = torch.tensor_split(model(metadata), 3, dim=1)
             w1, w2, w3 = w1.view(-1, 1, 1), w2.view(-1, 1, 1), w3.view(-1, 1, 1)
-            pred = (w1 * segmentation_model(patch_name)) + (w2 * swin_model(patch_name)) + (w3 * pixelwise_model(patch_name))
+            preds_batch = (w1 * retrieve_predictions_batch("swinres_agbm", patch_names_batch)) + (
+                    w2 * retrieve_predictions_batch("swinefficientnet_agbm", patch_names_batch)) + (
+                           w3 * retrieve_predictions_batch("swinres_agbm", patch_names_batch))
 
             # 3. Zero the gradients of all model parameters.
             optimizer.zero_grad()
             # 4. Compute the loss.
-            loss = criterion(pred, agbm)
+            loss = criterion(preds_batch, agbms_batch)
             # 5. Backward pass to compute the gradients of the loss w.r.t. the model parameters.
             loss.backward()
             # 6. Step the optimizer to update the model parameters.
@@ -80,8 +89,9 @@ def train_and_eval(model, train_loader, valid_loader, optimizer, criterion, epoc
         model.eval()
         valid_loss = []
         with torch.no_grad():
-            for step, (patch_name, agbm) in enumerate(valid_loader):
-                metadata = extract_metadata_batch(patch_name)
+            for step, (patch_names_batch, agbms_batch) in enumerate(valid_loader):
+                # metadata = extract_metadata_batch(patch_names_batch)
+                metadata = retrieve_metadata_batch(patch_names_batch)
 
                 # ======== VALIDATION ========
                 # 1. Move the tensors to the configured device.
@@ -89,10 +99,12 @@ def train_and_eval(model, train_loader, valid_loader, optimizer, criterion, epoc
                 # 2. Forward pass by passing the images through the model.
                 w1, w2, w3 = torch.tensor_split(model(metadata), 3, dim=1)
                 w1, w2, w3 = w1.view(-1, 1, 1), w2.view(-1, 1, 1), w3.view(-1, 1, 1)
-                pred = (w1 * segmentation_model(patch_name)) + (w2 * swin_model(patch_name)) + (w3 * pixelwise_model(patch_name))
+                preds_batch = (w1 * retrieve_predictions_batch("swinres_agbm", patch_names_batch)) + (
+                        w2 * retrieve_predictions_batch("swinefficientnet_agbm", patch_names_batch)) + (
+                               w3 * retrieve_predictions_batch("swinres_agbm", patch_names_batch))
 
                 # 3. Compute the loss.
-                loss = criterion(pred, agbm)
+                loss = criterion(preds_batch, agbms_batch)
                 # Note we do not backpropagate the gradients in the validation loop.
                 # ==========================
 
@@ -123,7 +135,7 @@ def create_metadata_model(metadata_dim, n_hidden, weights_dim):
                          nn.Softmax(0))
 
 
-def create_train_val_dataloaders(num_workers):
+def create_train_val_dataloaders(num_workers, batch_size):
     dataset = PatchNameDatasetTrain()
     train_size = int(0.8 * len(dataset))
     valid_size = len(dataset) - train_size
@@ -134,6 +146,23 @@ def create_train_val_dataloaders(num_workers):
     dataloader_val = DataLoader(dataset_val, batch_size=batch_size, shuffle=True, num_workers=num_workers)
 
     return dataloader_train, dataloader_val
+
+
+def retrieve_predictions_batch(model_name, patch_names):
+    preds = []
+    for patch_name in patch_names:
+        prediction_path = osp.join(osp.dirname(imgs.__file__), model_name, f"{patch_name}_agbm")
+        preds.append(rasterio.open(prediction_path).read().astype(np.float32))
+
+    return preds
+
+
+def retrieve_metadata_batch(patch_names):
+    metadatas = []
+    for patch_name in patch_names:
+        metadatas.append(metadata_df[patch_name])
+
+    return metadatas
 
 
 if __name__ == '__main__':
@@ -149,13 +178,8 @@ if __name__ == '__main__':
     batch_size = 16
     image_size = 256
     placeholder = (lambda x: torch.rand((x.shape[0], image_size, image_size)))
-    # TODO: Placeholders should be replaced by a method that takes a batch and returns a batch of predictions.
-    #  To make the predictions a pretrained model should be loaded.
-    segmentation_model = placeholder
-    swin_model = placeholder
-    pixelwise_model = placeholder
 
-    train_loader, valid_loader = create_train_val_dataloaders(num_workers=20)
+    train_loader, valid_loader = create_train_val_dataloaders(num_workers=20, batch_size=batch_size)
 
     train_and_eval(model=metadata_model,
                    train_loader=train_loader,
