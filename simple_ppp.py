@@ -33,7 +33,7 @@ class Linear(nn.Module):
         self.linear2 = nn.Linear(latent_dim, latent_dim//2)
         self.linear3 = nn.Linear(latent_dim//2, out_channels)
         self.batch_norm=nn.BatchNorm1d(in_channels)
-        self.seq=nn.Sequential(self.linear, nn.ReLU(), self.linear2,nn.ReLU(),self.linear3,nn.ReLU())
+        self.seq=nn.Sequential(self.linear, nn.ReLU(), self.linear2,nn.ReLU(),self.linear3,nn.Sigmoid())
 
     def forward(self, x):
         x=self.batch_norm(x)
@@ -57,6 +57,8 @@ class PixelWiseNet(pl.LightningModule):
         y=y.reshape(-1,y.shape[-1])
         # print(x.shape, y.shape)
         y_hat = self.model(x)
+        # print(y)
+        # print(y_hat)
         loss = nn.functional.mse_loss(y_hat, y)
         self.log('train_loss', loss,sync_dist=True)
         self.log('train_rmse', torch.sqrt(loss)*256,sync_dist=True)

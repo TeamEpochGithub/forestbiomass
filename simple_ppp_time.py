@@ -51,21 +51,26 @@ class TimeDistributed(nn.Module):
         return y
 
 class Linear(nn.Module):
-    def __init__(self, in_channels, out_channels,latent_dim=128):
+    def __init__(self, in_channels, out_channels,latent_dim=128,num_months=6):
         super(Linear,self).__init__()
+        self.num_months=num_months
         self.linear = nn.Linear(in_channels, latent_dim)
         self.linear2 = nn.Linear(latent_dim, latent_dim//2)
         self.linear3 = nn.Linear(latent_dim//2, out_channels)
-        self.batch_norm=nn.BatchNorm1d(in_channels*6)
-        self.seq=TimeDistributed(nn.Sequential(self.linear, nn.ReLU(), self.linear2,nn.ReLU(),self.linear3,nn.Softmax()))
+        self.batch_norm=nn.BatchNorm1d(in_channels*num_months)
+        self.seq=TimeDistributed(nn.Sequential(self.linear, nn.ReLU(),nn.Dropout(p=0.2), self.linear2,nn.ReLU(),nn.Dropout(p=0.2),self.linear3,nn.Sigmoid()))
+        self.month_Selector=nn.Sequential(nn.Linear(num_months,out_channels),nn.Sigmoid())
 
 
     def forward(self, x):
-        x=x.reshape(-1,x.shape[-1]*6)
+        x=x.reshape(-1,x.shape[-1])
         x=self.batch_norm(x)
-        x=x.reshape(-1,6,x.shape[-1]//6)
-        linear = self.seq(x)
-        linear=torch.max(linear,dim=1)[0]
+        x=x.reshape(-1,self.num_months,x.shape[-1]//self.num_months)
+        # print(x.shape)
+        linear = self.seq(x).squeeze()
+        # print(linear.shape)
+        # linear=torch.max(linear,dim=1)[0]
+        linear=self.month_Selector(linear)
         return linear
 
 class PixelWiseNet(pl.LightningModule):
@@ -75,13 +80,11 @@ class PixelWiseNet(pl.LightningModule):
         self.model = model
 
     def forward(self, x):
-        x=x.reshape(-1,6,x.shape[-1]//6)
         linear = self.model(x)
         return linear
 
     def training_step(self,train_batch, batch_idx):
         x, y = train_batch
-        x=x.reshape(-1,6,x.shape[-1]//6)
         y=y.reshape(-1,y.shape[-1])
         # print(x.shape, y.shape)
         y_hat = self.model(x)
@@ -92,7 +95,6 @@ class PixelWiseNet(pl.LightningModule):
 
     def validation_step(self, val_batch, batch_idx):
         x, y = val_batch
-        x=x.reshape(-1,6,x.shape[-1]//6)
         y=y.reshape(-1,y.shape[-1])
         y_hat = self.model(x)
         loss = nn.functional.mse_loss(y_hat, y)
@@ -102,7 +104,6 @@ class PixelWiseNet(pl.LightningModule):
 
     def test_step(self, test_batch, batch_idx):
         x, y = test_batch
-        x=x.reshape(-1,6,x.shape[-1]//6)
         y=y.reshape(-1,y.shape[-1])
         y_hat = self.model(x)
         loss = nn.functional.mse_loss(y_hat, y)
@@ -242,10 +243,10 @@ def set_args():
 
     data_type = "tiff"  # options are "npy" or "tiff"
     epochs = 50
-    learning_rate = 1e-3
+    learning_rate = 1e-4
     dataloader_workers = 10
     validation_fraction = 0.2
-    batch_size = 4
+    batch_size = 2
     log_step_frequency = 10
     version = -1  # Keep -1 if loading the latest model version.
     save_top_k_checkpoints = 1
@@ -412,6 +413,7 @@ def set_args():
         "--missing_month_repair_mode", default=missing_month_repair_mode, type=str
     )
     parser.add_argument("--in_channels", default=132//6, type=int)#264,132
+    parser.add_argument("--num_months", default=12, type=int)
 
     args = parser.parse_args()
 

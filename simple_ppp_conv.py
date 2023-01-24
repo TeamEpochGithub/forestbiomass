@@ -32,26 +32,30 @@ class Linear(nn.Module):
         super(Linear,self).__init__()
         self.linear = nn.Linear(in_channels, latent_dim)
         self.linear2 = nn.Linear(latent_dim, latent_dim//2)
-        self.linear3 = nn.Linear(latent_dim//2, out_channels)
+        self.linear3 = nn.Linear(latent_dim//2, 3)
         self.batch_norm=nn.BatchNorm1d(in_channels)
         self.out_channels=out_channels
-        self.seq=nn.Sequential(self.linear, nn.ReLU(), self.linear2,nn.ReLU(),self.linear3,nn.ReLU())
+        self.seq=nn.Sequential(self.linear, nn.ReLU(),nn.Dropout(0.1), self.linear2,nn.ReLU(),nn.Dropout(0.1),self.linear3,nn.Sigmoid())
         self.unet=smp.Unet(
-            encoder_name="resnet50",
-            in_channels=1,
+            encoder_name="efficientnet-b7",#mit_b5
+            in_channels=3,
             classes=1,
             encoder_weights="imagenet",
         )
 
     def forward(self, x):
+        # print(x.shape)
+        x=x.permute(0,2,3,1)
+        x=x.reshape(-1,x.shape[-1])
+        # print(x.shape)
         x=self.batch_norm(x)
         linear = self.seq(x)
-        print(linear.shape)
-        linear=linear.reshape(-1,self.out_channels,256,256)
-        print(linear.shape)
+        # print(linear.shape)
+        linear=linear.reshape(-1,3,256,256)
+        # print(linear.shape)
         linear=self.unet(linear)
-        print(linear.shape)
-        linear=linear.reshape(-1,self.out_channels)
+        # print(linear.shape)
+        # linear=linear.reshape(-1,self.out_channels)
         return linear
 
 class PixelWiseNet(pl.LightningModule):
@@ -61,14 +65,13 @@ class PixelWiseNet(pl.LightningModule):
         self.model = model
 
     def forward(self, x):
-        x=x.reshape(-1,x.shape[-1])
+        # x=x.reshape(-1,x.shape[-1])
         linear = self.model(x)
         return linear
 
     def training_step(self,train_batch, batch_idx):
         x, y = train_batch
-        x=x.reshape(-1,x.shape[-1])
-        y=y.reshape(-1,y.shape[-1])
+        # x=x.reshape(-1,x.shape[-1])
         # print(x.shape, y.shape)
         y_hat = self.model(x)
         loss = nn.functional.mse_loss(y_hat, y)
@@ -78,8 +81,7 @@ class PixelWiseNet(pl.LightningModule):
 
     def validation_step(self, val_batch, batch_idx):
         x, y = val_batch
-        x=x.reshape(-1,x.shape[-1])
-        y=y.reshape(-1,y.shape[-1])
+        # x=x.reshape(-1,x.shape[-1])
         y_hat = self.model(x)
         loss = nn.functional.mse_loss(y_hat, y)
         self.log('val_loss', loss)
@@ -88,8 +90,7 @@ class PixelWiseNet(pl.LightningModule):
 
     def test_step(self, test_batch, batch_idx):
         x, y = test_batch
-        x=x.reshape(-1,x.shape[-1])
-        y=y.reshape(-1,y.shape[-1])
+        # x=x.reshape(-1,x.shape[-1])
         y_hat = self.model(x)
         loss = nn.functional.mse_loss(y_hat, y)
         self.log('test_loss', loss)
@@ -139,8 +140,8 @@ class ChainedSegmentationDatasetMaker(Dataset):
 
         tensor_list = torch.cat(tensor_list, dim=0)
         # print(label_tensor.shape, tensor_list.shape)
-        tensor_list=tensor_list.reshape(tensor_list.shape[0],tensor_list.shape[1]*tensor_list.shape[2]).permute(1,0)/255
-        label_tensor=label_tensor.reshape(label_tensor.shape[0],label_tensor.shape[1]*label_tensor.shape[2]).permute(1,0)/255
+        tensor_list=tensor_list/255
+        label_tensor=label_tensor/255
         # print(label_tensor.shape, tensor_list.shape)
         # s = idx // (256**2)
         # j = idx % (256**2)
@@ -227,11 +228,11 @@ def set_args():
     month_encoder_weights = "imagenet"
 
     data_type = "tiff"  # options are "npy" or "tiff"
-    epochs = 20
-    learning_rate = 1e-4
-    dataloader_workers = 10
+    epochs = 200
+    learning_rate = 0.0005
+    dataloader_workers = 6
     validation_fraction = 0.2
-    batch_size = 4
+    batch_size = 2
     log_step_frequency = 10
     version = -1  # Keep -1 if loading the latest model version.
     save_top_k_checkpoints = 1
@@ -240,13 +241,13 @@ def set_args():
     missing_month_repair_mode = "zeros"
 
     month_selection = {
-        "September": 1,
+        "September": 0,
         "October": 0,
         "November": 0,
         "December": 0,
         "January": 0,
         "February": 0,
-        "March": 0,
+        "March": 1,
         "April": 1,
         "May": 1,
         "June": 1,
@@ -397,7 +398,7 @@ def set_args():
     parser.add_argument(
         "--missing_month_repair_mode", default=missing_month_repair_mode, type=str
     )
-    parser.add_argument("--in_channels", default=132, type=int)#264,132
+    parser.add_argument("--in_channels", default=132, type=int)#264,132,198
 
     args = parser.parse_args()
 
@@ -413,7 +414,7 @@ def train(args,train_dataloader,valid_dataloader):
     tb_logger = TensorBoardLogger("tb_logs", name="pixelwise_pytorch_conv")
     checkpoint_callback = ModelCheckpoint(
         save_top_k=args.save_top_k_checkpoints,
-        monitor="val/loss",
+        monitor="val_rmse",
         mode="min",
     )
     linear_model=Linear(in_channels=args.in_channels,out_channels=1)
@@ -426,7 +427,7 @@ def train(args,train_dataloader,valid_dataloader):
         log_every_n_steps=args.log_step_frequency,
         callbacks=[checkpoint_callback],
         num_sanity_val_steps=0,
-        strategy=DDPStrategy(process_group_backend="gloo",find_unused_parameters=False),
+        strategy=DDPStrategy(process_group_backend="gloo",find_unused_parameters=True),
     )
 
     trainer.fit(model,train_dataloaders=train_dataloader, val_dataloaders=valid_dataloader)

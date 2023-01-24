@@ -205,7 +205,7 @@ def train(args,train_set,save_path):
     #predictor = TabularPredictor(label="target", problem_type="regression", path=save_path,eval_metric = metric).fit(X, time_limit=60*60*12, presets='best_quality', holdout_frac=0.05,num_cpus=12)
     predictor = TabularPredictor(label="target", problem_type="regression", path=save_path,eval_metric = metric).fit(
     train_data,
-    presets='good_quality',
+    presets='interpretable',
     hyperparameters={
         # KNNRapidsModel: {},
         LinearRapidsModel: {},
@@ -216,7 +216,7 @@ def train(args,train_set,save_path):
         'GBM': [{}, {'extra_trees': True, 'ag_args': {'name_suffix': 'XT'}}, 'GBMLarge'],
         'FASTAI': {'ag_args_fit': {}},
     },
-   keep_only_best=True, save_space=True, holdout_frac=0.10, use_bag_holdout=True, num_cpus=12, time_limit=60*60*24,
+   keep_only_best=True, save_space=True, holdout_frac=0.15, use_bag_holdout=True, num_cpus=10, time_limit=60*60*12,
 )
 
 
@@ -497,7 +497,7 @@ if __name__ == "__main__":
     train_size = int((1 - args.validation_fraction) * len(train_dataset))
     valid_size = len(train_dataset) - train_size
     train_set, val_set = torch.utils.data.random_split(train_dataset, [train_size, valid_size])
-    save_path = 'agModels_good_efficent'  # specifies folder to store trained models
+    save_path = 'agModels_interpretable_efficent'  # specifies folder to store trained models
     train(args,train_set,save_path)
     test(args,val_set,save_path)
-    submission(args,test_set,save_path)
+    # submission(args,test_set,save_path)
