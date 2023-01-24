@@ -5,7 +5,7 @@
 #SBATCH --partition=memory
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=48
-#SBATCH --mem=400G
+#SBATCH --mem=1500G
 #SBATCH --account=research-eemcs-insy
 
 module load 2022r2 miniconda3

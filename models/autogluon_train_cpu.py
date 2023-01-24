@@ -423,7 +423,7 @@ def set_args():
     parser.add_argument("--model_version", default=version, type=int)
     parser.add_argument("--data_type", default=data_type, type=str)
 
-    data_path = "C:/Users/kuipe/Desktop/Epoch/forestbiomass/data"
+    data_path = osp.dirname(data.__file__)
     models_path = osp.dirname(models.__file__)
 
     parser.add_argument(

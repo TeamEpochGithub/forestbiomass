@@ -21,7 +21,7 @@ class PatchNameDatasetTrain(Dataset):
         with open(self.path_patch_names, newline='') as f:
             reader = csv.reader(f)
             patch_name_data = list(reader)
-        self.patch_names = patch_name_data[0][:50]
+        self.patch_names = patch_name_data[0]
 
     def __len__(self):
         return len(self.patch_names)

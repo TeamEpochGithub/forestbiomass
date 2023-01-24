@@ -18,12 +18,14 @@ from data import imgs
 from models.ensembler.patchnames_dataloader import PatchNameDatasetTrain
 from models.utils.loss_functions import rmse_loss
 import os.path as osp
+import json
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-metadata_df = pd.read_csv(osp.join(osp.dirname(data.__file__), "corruptedness_values.csv"))
-metadata_df.columns = ["patch_name", "corruptedness_values"]
-metadata_dict = dict(zip(list(metadata_df.patch_name), list(metadata_df.corruptedness_values)))
+with open(osp.join(osp.dirname(data.__file__), "convert_corruptedness.json"), "r") as f:
+    content = f.read()
+    metadata_dict = json.loads(content)
+
 
 def bar(curr_step, total_steps, bar_length=30):
     """
@@ -54,17 +56,17 @@ def train_and_eval(model, train_loader, valid_loader, optimizer, criterion, epoc
         train_loss = []
         for step, (patch_names_batch, agbms_batch) in enumerate(train_loader):
             # ======== TRAINING ========
-            # metadata = extract_metadata_batch
             metadata = retrieve_metadata_batch(patch_names_batch)
 
             # 1. Move the tensors to the configured device.
-            # metadata, agbm, patch_name = metadata.to(DEVICE), agbm.to(DEVICE), patch_name.to(DEVICE)
+            agbms_batch, metadata, model = agbms_batch.to(DEVICE), metadata.to(DEVICE), model.to(DEVICE)
+
             # 2. Forward pass by passing the images through the model.
             w1, w2, w3 = torch.tensor_split(model(metadata), 3, dim=1)
-            w1, w2, w3 = w1.view(-1, 1, 1), w2.view(-1, 1, 1), w3.view(-1, 1, 1)
-            preds_batch = (w1 * retrieve_predictions_batch("swinres_agbm", patch_names_batch)) + (
-                    w2 * retrieve_predictions_batch("swinefficientnet_agbm", patch_names_batch)) + (
-                           w3 * retrieve_predictions_batch("swinres_agbm", patch_names_batch))
+            w1, w2, w3 = w1.view(-1, 1, 1, 1), w2.view(-1, 1, 1, 1), w3.view(-1, 1, 1, 1)
+            preds_batch = (w1 * retrieve_predictions_batch("swinres_agbm", patch_names_batch).to(DEVICE)) + (
+                    w2 * retrieve_predictions_batch("swinres_agbm", patch_names_batch).to(DEVICE)) + (
+                                  w3 * retrieve_predictions_batch("swinefficientnet_agbm", patch_names_batch).to(DEVICE))
 
             # 3. Zero the gradients of all model parameters.
             optimizer.zero_grad()
@@ -90,18 +92,20 @@ def train_and_eval(model, train_loader, valid_loader, optimizer, criterion, epoc
         valid_loss = []
         with torch.no_grad():
             for step, (patch_names_batch, agbms_batch) in enumerate(valid_loader):
-                # metadata = extract_metadata_batch(patch_names_batch)
-                metadata = retrieve_metadata_batch(patch_names_batch)
 
                 # ======== VALIDATION ========
+                metadata = retrieve_metadata_batch(patch_names_batch)
+
                 # 1. Move the tensors to the configured device.
-                # metadata, agbm, patch_name = metadata.to(DEVICE), agbm.to(DEVICE), patch_name.to(DEVICE)
+                agbms_batch, metadata, model = agbms_batch.to(DEVICE), metadata.to(DEVICE), model.to(DEVICE)
+
                 # 2. Forward pass by passing the images through the model.
                 w1, w2, w3 = torch.tensor_split(model(metadata), 3, dim=1)
-                w1, w2, w3 = w1.view(-1, 1, 1), w2.view(-1, 1, 1), w3.view(-1, 1, 1)
-                preds_batch = (w1 * retrieve_predictions_batch("swinres_agbm", patch_names_batch)) + (
-                        w2 * retrieve_predictions_batch("swinefficientnet_agbm", patch_names_batch)) + (
-                               w3 * retrieve_predictions_batch("swinres_agbm", patch_names_batch))
+                w1, w2, w3 = w1.view(-1, 1, 1, 1), w2.view(-1, 1, 1, 1), w3.view(-1, 1, 1, 1)
+                preds_batch = (w1 * retrieve_predictions_batch("swinres_agbm", patch_names_batch).to(DEVICE)) + (
+                        w2 * retrieve_predictions_batch("swinres_agbm", patch_names_batch).to(DEVICE)) + (
+                                      w3 * retrieve_predictions_batch("swinefficientnet_agbm", patch_names_batch).to(
+                                  DEVICE))
 
                 # 3. Compute the loss.
                 loss = criterion(preds_batch, agbms_batch)
@@ -136,6 +140,8 @@ def create_metadata_model(metadata_dim, n_hidden, weights_dim):
 
 
 def create_train_val_dataloaders(num_workers, batch_size):
+    print("Creating dataloaders...")
+
     dataset = PatchNameDatasetTrain()
     train_size = int(0.8 * len(dataset))
     valid_size = len(dataset) - train_size
@@ -151,18 +157,18 @@ def create_train_val_dataloaders(num_workers, batch_size):
 def retrieve_predictions_batch(model_name, patch_names):
     preds = []
     for patch_name in patch_names:
-        prediction_path = osp.join(osp.dirname(imgs.__file__), model_name, f"{patch_name}_agbm")
+        prediction_path = osp.join(osp.dirname(imgs.__file__), model_name, f"{patch_name}_agbm.tif")
         preds.append(rasterio.open(prediction_path).read().astype(np.float32))
-
+    preds = torch.tensor(np.array(preds))
     return preds
 
 
 def retrieve_metadata_batch(patch_names):
     metadatas = []
     for patch_name in patch_names:
-        metadatas.append(metadata_df[patch_name])
-
-    return metadatas
+        metadatas.append(metadata_dict[patch_name])
+    metadatas = np.array(metadatas)
+    return torch.Tensor(metadatas)  # (batch_size, 180)
 
 
 if __name__ == '__main__':
