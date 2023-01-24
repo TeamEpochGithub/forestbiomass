@@ -4,6 +4,7 @@ from swin import StageModule
 import torchvision
 from efficientnet import EfficientNet_v1
 
+
 class Conv_3(nn.Module):
     def __init__(self, in_channels, out_channels, kernel, stride, padding, alpha=0.2):
         super(Conv_3, self).__init__()
@@ -111,6 +112,7 @@ class DConv_5(nn.Module):
         e5 = e5 + e3
         return e5
 
+
 # Mix Block with attention mechanism
 class MixBlock(nn.Module):
     def __init__(self, c_in):
@@ -147,12 +149,13 @@ class MixBlock(nn.Module):
         energy = torch.bmm(M_query, M_key)  # [BC, W, W]
         attention = self.softmax(energy).view(B, C, W, W)
 
-        att_global = x_global * attention * (torch.sigmoid(self.global_gamma) * 2.0 - 1.0) 
+        att_global = x_global * attention * (torch.sigmoid(self.global_gamma) * 2.0 - 1.0)
         y_local = x_local + self.local_bn(self.local_conv(att_global))
 
         att_local = x_local * attention * (torch.sigmoid(self.local_gamma) * 2.0 - 1.0)
         y_global = x_global + self.global_bn(self.global_conv(att_local))
         return y_local, y_global
+
 
 class Swish(nn.Module):
     def __init__(self):
@@ -162,9 +165,11 @@ class Swish(nn.Module):
 
     def forward(self, x):
         return x * self.sigmoid(x)
-    
+
+
 def _BatchNorm(channels, eps=1e-3, momentum=0.01):
     return nn.BatchNorm2d(channels, eps=eps, momentum=momentum)
+
 
 def _Conv3x3Bn(in_channels, out_channels, stride):
     return nn.Sequential(
@@ -173,7 +178,9 @@ def _Conv3x3Bn(in_channels, out_channels, stride):
         Swish()
     )
 
+
 efficient_model = EfficientNet_v1()
+
 
 class Efficient_Swin(nn.Module):
     def __init__(self, img_size=256, hidden_dim=64, layers=(2, 2, 18,
@@ -245,7 +252,7 @@ class Efficient_Swin(nn.Module):
 
         self.mix4 = MixBlock(hidden_dim * 8)
 
-        self.conv4 = Conv_3(hidden_dim*16, hidden_dim * 8, 3, 1, 1)
+        self.conv4 = Conv_3(hidden_dim * 16, hidden_dim * 8, 3, 1, 1)
 
         self.decode4 = Decoder(512, 256 + 256, 256)
         self.decode3 = Decoder(256, 128 + 128, 128)
@@ -296,7 +303,6 @@ class Efficient_Swin(nn.Module):
         d0 = self.decode0(d1)  # 64,256,256
         out = self.conv_last(d0)  # 1,256,256
         return out
-    
 
 # net = Efficient_Swin()
 # x_image = torch.randn(1, 3, 256, 256)
