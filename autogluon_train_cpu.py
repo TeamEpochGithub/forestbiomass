@@ -180,7 +180,7 @@ def train(args,train_set,save_path):
     Y=[]
     c=0
     lower=0
-    upper=100
+    upper=4000
     for (x, y) in tqdm(train_dataloader):
         X.append(x.detach().cpu().numpy().reshape(x.shape[1],-1).transpose(1,0))
         Y.append(y.detach().cpu().numpy().reshape(y.shape[1],-1).transpose(1,0))
@@ -197,7 +197,7 @@ def train(args,train_set,save_path):
     X = pd.DataFrame(X)
     X["target"]=Y
     del Y
-    subsample_size = 250000  # subsample subset of data for faster demo, try setting this to much larger values
+    subsample_size = 50000000  # subsample subset of data for faster demo, try setting this to much larger values
     train_data = X.sample(n=subsample_size, random_state=0)
     print(train_data.head())
     del X
@@ -205,7 +205,7 @@ def train(args,train_set,save_path):
     #predictor = TabularPredictor(label="target", problem_type="regression", path=save_path,eval_metric = metric).fit(X, time_limit=60*60*12, presets='best_quality', holdout_frac=0.05,num_cpus=12)
     predictor = TabularPredictor(label="target", problem_type="regression", path=save_path,eval_metric = metric).fit(
     train_data,
-    presets='interpretable',
+    presets='medium_quality',
     hyperparameters={
         # KNNRapidsModel: {},
         LinearRapidsModel: {},
@@ -216,7 +216,7 @@ def train(args,train_set,save_path):
         'GBM': [{}, {'extra_trees': True, 'ag_args': {'name_suffix': 'XT'}}, 'GBMLarge'],
         'FASTAI': {'ag_args_fit': {}},
     },
-   keep_only_best=True, save_space=True, holdout_frac=0.15, use_bag_holdout=True, num_cpus=10, time_limit=60*60*12,
+   keep_only_best=True, save_space=True, holdout_frac=0.15, use_bag_holdout=True, num_cpus=44, time_limit=60*60*16,
 )
 
 
@@ -228,7 +228,7 @@ def test(args,val_set,save_path):
     label=[]
     c=0
     lower=0
-    upper=10
+    upper=200
     for (x, y) in tqdm(valid_dataloader):
         test_data_nolab.append(x.detach().cpu().numpy().reshape(x.shape[1],-1).transpose(1,0))
         label.append(y.detach().cpu().numpy().reshape(y.shape[1],-1).transpose(1,0))
@@ -497,7 +497,7 @@ if __name__ == "__main__":
     train_size = int((1 - args.validation_fraction) * len(train_dataset))
     valid_size = len(train_dataset) - train_size
     train_set, val_set = torch.utils.data.random_split(train_dataset, [train_size, valid_size])
-    save_path = 'agModels_interpretable_efficent'  # specifies folder to store trained models
+    save_path = 'agModels_medium_efficent'  # specifies folder to store trained models
     train(args,train_set,save_path)
     test(args,val_set,save_path)
     # submission(args,test_set,save_path)

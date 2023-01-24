@@ -25,6 +25,7 @@ from pytorch_lightning import Trainer
 from pytorch_lightning.strategies import DDPStrategy
 from pytorch_lightning.loggers import TensorBoardLogger
 import segmentation_models_pytorch as smp
+from PIL import Image
 torch.set_float32_matmul_precision('medium')
 
 class Linear(nn.Module):
@@ -101,6 +102,7 @@ class PixelWiseNet(pl.LightningModule):
         optimizer = torch.optim.Adam(self.parameters(), lr=self.lr)
         return optimizer
 
+
 class ChainedSegmentationDatasetMaker(Dataset):
     def __init__(self, training_feature_path, training_labels_path, id_list, data_type, S1_bands, S2_bands,
                  month_selection, transform=None,test=False):
@@ -147,6 +149,27 @@ class ChainedSegmentationDatasetMaker(Dataset):
         # j = idx % (256**2)
         # tensor_list, label_tensor = tensor_list[s*256**2+j,:].squeeze(), label_tensor[s*256**2+j,:].squeeze()
         return tensor_list, label_tensor
+
+def load_model(args):
+    print("Getting saved model...")
+
+    assert osp.exists(args.current_model_path) is True, "requested model does not exist"
+
+    log_folder_path = args.current_model_path
+
+    version_dir = list(os.scandir(log_folder_path))[-1]
+
+    checkpoint_dir_path = osp.join(log_folder_path, version_dir, "checkpoints")
+    latest_checkpoint_name = list(os.scandir(checkpoint_dir_path))[-1]
+    latest_checkpoint_path = osp.join(checkpoint_dir_path, latest_checkpoint_name)
+
+    linear_model=Linear(in_channels=args.in_channels,out_channels=1)
+    model=PixelWiseNet(linear_model,lr=args.learning_rate)
+
+    checkpoint = torch.load(str(latest_checkpoint_path))
+    model.load_state_dict(checkpoint["state_dict"])
+
+    return model
 
 def apply_transforms():
     return nn.Sequential(
@@ -217,6 +240,24 @@ def prepare_dataset_training(args):
 
     return new_dataset
 
+def prepare_dataset_testing(args):
+    with open(args.training_ids_path, newline='') as f:
+        reader = csv.reader(f)
+        patch_name_data = list(reader)
+    chip_ids = patch_name_data[0]
+
+
+    training_features_path = args.tiff_training_features_path
+
+    new_dataset = ChainedSegmentationDatasetMaker(training_features_path,
+                                                  args.tiff_training_labels_path,
+                                                  chip_ids,
+                                                  args.data_type,
+                                                  args.S1_band_selection,
+                                                  args.S2_band_selection,
+                                                  args.month_selection)
+
+    return new_dataset,chip_ids
 
 def set_args():
     band_segmenter = "Unet"
@@ -302,28 +343,7 @@ def set_args():
 
     parser = argparse.ArgumentParser()
 
-    if band_encoder_weights is not None and month_encoder_weights is not None:
-        model_identifier = (
-            f"Bands_{band_segmenter}_{band_encoder}_{band_encoder_weights}_{s1_bands_indicator}_{s2_bands_indicator}"
-            f"_Months_{month_segmenter}_{month_encoder}_{month_encoder_weights}_{month_selection_indicator}"
-        )
-
-    elif band_encoder_weights is None and month_encoder_weights is not None:
-        model_identifier = (
-            f"Bands_{band_segmenter}_{band_encoder}_{s1_bands_indicator}_{s2_bands_indicator}"
-            f"_Months_{month_segmenter}_{month_encoder}_{month_encoder_weights}_{month_selection_indicator}"
-        )
-
-    elif band_encoder_weights is not None and month_encoder_weights is None:
-        model_identifier = (
-            f"Bands_{band_segmenter}_{band_encoder}_{s1_bands_indicator}_{s2_bands_indicator}"
-            f"_Months_{month_segmenter}_{month_encoder}_{month_encoder_weights}_{month_selection_indicator}"
-        )
-    else:
-        model_identifier = (
-            f"Bands_{band_segmenter}_{band_encoder}_{s1_bands_indicator}_{s2_bands_indicator}"
-            f"_Months_{month_segmenter}_{month_encoder}_{month_selection_indicator}"
-        )
+    model_identifier="pixelwise_pytorch_conv"
 
     parser.add_argument("--model_identifier", default=model_identifier, type=str)
 
@@ -432,6 +452,27 @@ def train(args,train_dataloader,valid_dataloader):
 
     trainer.fit(model,train_dataloaders=train_dataloader, val_dataloaders=valid_dataloader)
 
+def predict(args,train_dataloader):
+    model=load_model(args)
+    trainer = Trainer(
+        accelerator="gpu",
+        devices=2,
+        max_epochs=args.epochs,
+        log_every_n_steps=args.log_step_frequency,
+        num_sanity_val_steps=0,
+        strategy=DDPStrategy(process_group_backend="gloo",find_unused_parameters=True),
+    )
+    preds=trainer.predict(model,train_dataloaders=train_dataloader)
+    return preds
+
+def make_submission_format(predictions,chip_ids):
+    transformed_predictions = [x.cpu().squeeze().detach().numpy() for x in predictions]
+    linked_tensor_list = list(zip(chip_ids, transformed_predictions))
+    for current_id,current_tensor in linked_tensor_list:
+        agbm_path = osp.join(args.submission_folder_path, f"{current_id}_agbm.tif")
+        im = Image.fromarray(current_tensor)
+        im.save(agbm_path)
+    print("Finished creating submission.")
 
 if __name__ == "__main__":
     args = set_args()
@@ -444,3 +485,9 @@ if __name__ == "__main__":
     val_dataloader = DataLoader(val_set, batch_size=args.batch_size, shuffle=False,num_workers=args.dataloader_workers)
     save_path = 'pixelwise_pytorch'  # specifies folder to store trained models
     train(args,train_dataloader,val_dataloader)
+    ###
+    train_dataset,chip_ids = prepare_dataset_training(args)
+    train_dataloader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=False,
+                                  num_workers=args.dataloader_workers)
+    preds=predict(args,train_dataloader)
+    make_submission_format(preds,chip_ids)
