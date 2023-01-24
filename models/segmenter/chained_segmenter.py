@@ -412,7 +412,7 @@ def train(args):
                              band_count=len(args.band_selection),
                              month_count=args.month_selection.count(1))
 
-    logger = TensorBoardLogger("tb_logs", name=args.model_identifier)
+    logger = TensorBoardLogger("../tb_logs", name=args.model_identifier)
 
     checkpoint_callback = ModelCheckpoint(
         save_top_k=args.save_top_k_checkpoints,
@@ -516,12 +516,12 @@ def submission_generator(args):
 
 
 def set_args():
-    band_segmenter = "Unet"
-    band_encoder = "efficientnet-b0"
+    band_segmenter = "Unet++"
+    band_encoder = "efficientnet-b2"
     band_encoder_weights = "imagenet"
 
-    month_segmenter = "Unet"
-    month_encoder = "efficientnet-b0"
+    month_segmenter = "Unet++"
+    month_encoder = "efficientnet-b2"
     month_encoder_weights = "imagenet"
 
     data_type = "tiff"  # options are "npy" or "tiff"
@@ -529,11 +529,11 @@ def set_args():
     learning_rate = 1e-4
     dataloader_workers = 16
     validation_fraction = 0.2
-    batch_size = 1
+    batch_size = 8
     log_step_frequency = 50
     version = -1  # Keep -1 if loading the latest model version.
     save_top_k_checkpoints = 1
-    loss_function = loss_functions.logit_binary_cross_entropy_loss
+    loss_function = loss_functions.rmse_loss
 
     missing_month_repair_mode = "zeros"
 
@@ -653,10 +653,10 @@ def set_args():
     parser.add_argument('--tiff_training_labels_path', default=str(osp.join(data_path, "imgs", "train_agbm")))
     parser.add_argument('--tiff_testing_features_path', default=str(osp.join(data_path, "imgs", "test_features")))
 
-    parser.add_argument('--training_ids_path', default=str(osp.join(data_path, "local_patch_names")), type=str)
+    parser.add_argument('--training_ids_path', default=str(osp.join(data_path, "patch_names")), type=str)
     parser.add_argument('--testing_ids_path', default=str(osp.join(data_path, "test_patch_names")), type=str)
 
-    parser.add_argument('--current_model_path', default=str(osp.join(models_path, "tb_logs", model_identifier)),
+    parser.add_argument('--current_model_path', default=str(osp.join(models_path, "../tb_logs", model_identifier)),
                         type=str)
     parser.add_argument('--submission_folder_path', default=str(osp.join(data_path, "imgs", "test_agbm")), type=str)
 

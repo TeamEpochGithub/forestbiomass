@@ -5,7 +5,7 @@
 #SBATCH --partition=gpu
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=48
-#SBATCH --gpus-per-task=2
+#SBATCH --gpus-per-task=1
 #SBATCH --mem-per-cpu=4G
 #SBATCH --account=research-eemcs-insy
 
@@ -14,15 +14,15 @@ unset CONDA_SHLVL
 source "$(conda info --base)/etc/profile.d/conda.sh"
 
 ### ==============COMMENT OUT AFTER FIRST RUN==============
-#conda create -n forest python=3.8.12
+conda create -n forest python=3.8.12
 ### =======================================================
 
 conda activate forest
 
 ### ==============COMMENT OUT AFTER FIRST RUN==============
 conda install pytorch torchvision torchaudio pytorch-cuda=11.6 -c pytorch -c nvidia
-conda install -c default rasterio segmentation-models-pytorch pytorch-lightning torchgeo pillow gdal poppler
+conda install -c conda-forge rasterio segmentation-models-pytorch pytorch-lightning torchgeo pillow gdal poppler
 ### =======================================================
 
-srun python /home/ptempelman/forestbiomass/models/chained_segmenter_tiff.py
+srun python /home/lvanblokland/forestbiomass/models/segmenter/chained_segmenter.py
 conda deactivate
