@@ -14,14 +14,16 @@ unset CONDA_SHLVL
 source "$(conda info --base)/etc/profile.d/conda.sh"
 
 ### ==============COMMENT OUT AFTER FIRST RUN==============
-conda create -n forest python=3.8.12
+#conda create -n forest python=3.8.12
 ### =======================================================
 
 conda activate forest
 
 ### ==============COMMENT OUT AFTER FIRST RUN==============
-conda install pytorch torchvision torchaudio pytorch-cuda=11.6 -c pytorch -c nvidia
-conda install -c conda-forge rasterio segmentation-models-pytorch pytorch-lightning torchgeo pillow gdal poppler
+#conda install pytorch torchvision torchaudio pytorch-cuda=11.6 -c pytorch -c nvidia
+#conda install -c conda-forge rasterio segmentation-models-pytorch pytorch-lightning torchgeo pillow gdal poppler
+conda install -c conda-forge imgaug
+conda install -c conda-forge albumentations
 ### =======================================================
 
 srun python /home/lvanblokland/forestbiomass/models/segmenter/chained_segmenter.py

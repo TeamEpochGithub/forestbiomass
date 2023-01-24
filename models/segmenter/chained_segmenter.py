@@ -161,7 +161,7 @@ def select_bands(bands_to_keep):
         # Standardized Water-Level Index for water detection, index 21
         tf.AppendRatioAB(index_a=11, index_b=12),  # VV/VH Ascending, index 22
         tf.AppendRatioAB(index_a=13, index_b=14),  # VV/VH Descending, index 23
-        tf.DropBands(torch.device('cpu'), bands_to_keep)  # DROPS ALL BUT SPECIFIED bands_to_keep
+        tf.DropBands(torch.device('cpu'), bands_to_keep),  # DROPS ALL BUT SPECIFIED bands_to_keep
     )
 
 
