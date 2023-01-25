@@ -6,12 +6,10 @@
 # 	- x1 * (inference swin_transformer) + x2 * (inference segmenter) + x3 *  (inference pixel_wise)
 # 	- then calculate and backpropagate model over ensemble_model
 import numpy as np
-import pandas as pd
 import rasterio
 import torch
 from torch import nn
 from torch.utils.data import DataLoader
-from tqdm import tqdm
 
 import data
 from data import imgs
@@ -20,7 +18,7 @@ from models.utils.loss_functions import rmse_loss
 import os.path as osp
 import json
 
-DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+DEVICE = torch.device("cuda:1" if torch.cuda.is_available() else "cpu")
 
 with open(osp.join(osp.dirname(data.__file__), "convert_corruptedness.json"), "r") as f:
     content = f.read()
@@ -54,7 +52,7 @@ def train_and_eval(model, train_loader, valid_loader, optimizer, criterion, epoc
         # Training loop
         model.train()
         train_loss = []
-        for step, (patch_names_batch, agbms_batch) in enumerate(train_loader):
+        for epoch_step, (patch_names_batch, agbms_batch) in enumerate(train_loader):
             # ======== TRAINING ========
             metadata = retrieve_metadata_batch(patch_names_batch)
 
@@ -81,17 +79,14 @@ def train_and_eval(model, train_loader, valid_loader, optimizer, criterion, epoc
             # Logging metrics
             train_loss.append(loss.item())
 
-            if step % log_freq == 0 or step == len(train_loader) - 1:
-                print(
-                    f"Epoch {epoch + 1:2d}/{epochs:2d} {bar(step + 1, len(train_loader))} Train-Loss: {np.mean(train_loss):.4f} \r",
-                    end="")
-        print()
+            if epoch_step % log_freq == 0 or epoch_step == len(train_loader) - 1:
+                print(f"Epoch {epoch + 1:2d}/{epochs:2d} {bar(epoch_step + 1, len(train_loader))} Train-Loss: {np.mean(train_loss):.4f} \r")
 
         # Evaluation loop
         model.eval()
         valid_loss = []
         with torch.no_grad():
-            for step, (patch_names_batch, agbms_batch) in enumerate(valid_loader):
+            for epoch_step, (patch_names_batch, agbms_batch) in enumerate(valid_loader):
 
                 # ======== VALIDATION ========
                 metadata = retrieve_metadata_batch(patch_names_batch)
@@ -115,11 +110,8 @@ def train_and_eval(model, train_loader, valid_loader, optimizer, criterion, epoc
                 # Logging metrics
                 valid_loss.append(loss.item())
 
-                if step % log_freq == 0 or step == len(valid_loader) - 1:
-                    print(
-                        f"Epoch {epoch + 1:2d}/{epochs:2d} {bar(step + 1, len(valid_loader))} Valid-Loss: {np.mean(valid_loss):.4f} \r",
-                        end="")
-            print()
+                if epoch_step % log_freq == 0 or epoch_step == len(valid_loader) - 1:
+                    print(f"Epoch {epoch + 1:2d}/{epochs:2d} {bar(epoch_step + 1, len(valid_loader))} Valid-Loss: {np.mean(valid_loss):.4f} \r")
 
         global_train_loss.extend(train_loss)
         global_valid_loss.extend(valid_loss)
@@ -136,7 +128,8 @@ def create_metadata_model(metadata_dim, n_hidden, weights_dim):
                          # nn.Linear(90, 12),
                          # nn.ReLU(),
                          nn.Linear(12, weights_dim),
-                         nn.Softmax(0))
+                         nn.Softmax(1))
+
 
 
 def create_train_val_dataloaders(num_workers, batch_size):
@@ -192,4 +185,4 @@ if __name__ == '__main__':
                    valid_loader=valid_loader,
                    optimizer=optimizer,
                    criterion=loss_function,
-                   epochs=epochs, log_freq=100)
+                   epochs=epochs, log_freq=5)

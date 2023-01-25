@@ -10,6 +10,18 @@ def rmse_loss(prediction, target):
     return torch.sqrt(F.mse_loss(prediction, target))
 
 
+def huber_loss(y_true, y_pred, delta=60.0):
+    error = y_true - y_pred
+    abs_error = torch.abs(error)
+    quadratic = torch.where(abs_error < delta, 0.5 * error ** 2, delta * (abs_error - 0.5 * delta))
+    return torch.mean(quadratic)
+
+
+def rmsle_loss(y_true, y_pred):
+    terms_to_sum = (torch.log(y_pred + 1) - torch.log(y_true + 1)) ** 2
+    return torch.sqrt(torch.mean(terms_to_sum))
+
+
 # Always seems to have a loss of 0.
 def cross_entropy_loss(prediction, target):
     return F.cross_entropy(prediction, target)
