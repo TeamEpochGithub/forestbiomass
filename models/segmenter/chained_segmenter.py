@@ -493,7 +493,7 @@ def submission_generator(args):
 
     new_dataset, chip_ids = prepare_dataset_testing(args)
 
-    trainer = Trainer(accelerator="gpu", devices=1)
+    trainer = Trainer(accelerator="cpu", devices=1)
 
     dl = DataLoader(new_dataset, num_workers=12)
 
@@ -516,18 +516,18 @@ def submission_generator(args):
 
 
 def set_args():
-    band_segmenter = "Unet++"
-    band_encoder = "efficientnet-b2"
+    band_segmenter = "Unet"
+    band_encoder = "efficientnet-b0"
     band_encoder_weights = "imagenet"
 
     month_segmenter = "Unet++"
-    month_encoder = "efficientnet-b2"
+    month_encoder = "efficientnet-b0"
     month_encoder_weights = "imagenet"
 
     data_type = "tiff"  # options are "npy" or "tiff"
     epochs = 100
     learning_rate = 1e-4
-    dataloader_workers = 16
+    dataloader_workers = 8
     validation_fraction = 0.2
     batch_size = 8
     log_step_frequency = 50
@@ -537,8 +537,8 @@ def set_args():
 
     missing_month_repair_mode = "zeros"
 
-    multiprocessing_strategy = None  # replace with ddp if using more than 1 device
-    device_count = 1
+    multiprocessing_strategy = "ddp"  # replace with ddp if using more than 1 device
+    device_count = 2
 
     month_selection = {
         "September": 1,
@@ -612,13 +612,6 @@ def set_args():
         model_identifier = f"Bands_{band_segmenter}_{band_encoder}_{band_selection_indicator}" \
                            f"_Months_{month_segmenter}_{month_encoder}_{month_selection_indicator}"
 
-    band_dict = {}
-
-    for i in range(0, len(band_selection) * len(month_selection)):
-        band_dict[f'image{i}'] = 'image'
-
-    band_dict['mask'] = 'mask'
-
     data_augmentation_pipeline = A.Compose([
         A.HorizontalFlip(p=0.5),
         A.VerticalFlip(p=0.5),
@@ -642,7 +635,7 @@ def set_args():
     data_path = osp.dirname(data.__file__)
     models_path = osp.dirname(models.__file__)
 
-    # data_path = r"C:\Users\kuipe\Desktop\Epoch\forestbiomass\data"
+    data_path = r"C:\Users\kuipe\Desktop\Epoch\forestbiomass\data"
 
     # Note: Converted data does not have an explicit label path, as labels are stored within training_features
     parser.add_argument('--converted_training_features_path', default=str(osp.join(data_path, "converted")), type=str)
@@ -692,4 +685,4 @@ def set_args():
 if __name__ == '__main__':
     args = set_args()
     train(args)
-    # chained_experimental_submission(args)
+    submission_generator(args)
