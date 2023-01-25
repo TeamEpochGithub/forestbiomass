@@ -16,7 +16,7 @@ def get_n_worst(predictions, labels, selected_patch_names, n=10) -> list:
 
 def get_worst_predictions_from_model(model_prediction_function, X_all, y_all, selected_patch_names, n=10) -> list:
     """
-    Calculate the worst predictions from a model based on RMSE, returns prediction, label, and score
+    Calculate the worst predictions from a corrupted_model based on RMSE, returns prediction, label, and score
     """
     pred_label_score = []
     for ind, patch in enumerate(X_all):

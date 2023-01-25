@@ -313,9 +313,9 @@ def train(args):
 
 
 def load_model(args):
-    print("Getting saved model...")
+    print("Getting saved corrupted_model...")
 
-    assert osp.exists(args.current_model_path) is True, "requested model does not exist"
+    assert osp.exists(args.current_model_path) is True, "requested corrupted_model does not exist"
 
     log_folder_path = args.current_model_path
 
@@ -498,7 +498,7 @@ def set_args():
     validation_fraction = 0.2
     batch_size = 16
     log_step_frequency = 3
-    version = -1  # Keep -1 if loading the latest model version.
+    version = -1  # Keep -1 if loading the latest corrupted_model version.
     save_top_k_checkpoints = 3
     loss_function = loss_functions.rmse_loss
 

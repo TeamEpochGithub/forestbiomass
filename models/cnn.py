@@ -54,7 +54,7 @@ class DataGeneratorTif(tf.keras.utils.Sequence):
         Few things to mention:
             - This data generator uses original tif files, now only s2 and averages them for every patch
             - Data is reshaped to be compatible with CNN
-            - The data generator tells our model how to fetch one batch of training data (in this case from files)
+            - The data generator tells our corrupted_model how to fetch one batch of training data (in this case from files)
             - Any work that can be done before training, should be done in init, since we want fetching a batch to be fast
             - Therefore, we want all filenames and labels to be determined before training
             - This saves work, because we will be fetching batches multiple times (across epochs)
@@ -110,7 +110,7 @@ class DataGeneratorNpy(tf.keras.utils.Sequence):
     def __init__(self, patch_ids, batch_size=4, mode='train'):
         """
         Few things to mention:
-            - The data generator tells our model how to fetch one batch of training data (in this case from files)
+            - The data generator tells our corrupted_model how to fetch one batch of training data (in this case from files)
             - Any work that can be done before training, should be done in init, since we want fetching a batch to be fast
             - Therefore, we want all filenames and labels to be determined before training
             - This saves work, because we will be fetching batches multiple times (across epochs)
@@ -162,7 +162,7 @@ class DataGeneratorNpy(tf.keras.utils.Sequence):
 
             # average all the bands per patch together.
             average = np.average(s2_patch, axis=0)
-            # Reshape it so that the CNN model can take the data in. 11 is the number of channels.
+            # Reshape it so that the CNN corrupted_model can take the data in. 11 is the number of channels.
             average = average.reshape(256, 256, 11)
             batch_x.append(average)
 
@@ -174,7 +174,7 @@ class DataGeneratorNpyClean(tf.keras.utils.Sequence):
 
         """
         Few things to mention:
-            - The data generator tells our model how to fetch one batch of training data (in this case from files)
+            - The data generator tells our corrupted_model how to fetch one batch of training data (in this case from files)
             - Any work that can be done before training, should be done in init, since we want fetching a batch to be fast
             - Therefore, we want all filenames and labels to be determined before training
             - This saves work, because we will be fetching batches multiple times (across epochs)
@@ -239,7 +239,7 @@ class DataGeneratorNpyClean(tf.keras.utils.Sequence):
 
             # average all the bands per patch together.
             average = np.average(s2_patch, axis=0)
-            # Reshape it so that the CNN model can take the data in. 11 is the number of channels.
+            # Reshape it so that the CNN corrupted_model can take the data in. 11 is the number of channels.
             average = average.reshape(256, 256, 11)
             batch_x.append(average)
             index+=1
@@ -250,7 +250,7 @@ class DataGeneratorNpyNoise(tf.keras.utils.Sequence):
     def __init__(self, patch_ids, batch_size=1):
         """
         Few things to mention:
-            - The data generator tells our model how to fetch one batch of training data (in this case from files)
+            - The data generator tells our corrupted_model how to fetch one batch of training data (in this case from files)
             - Any work that can be done before training, should be done in init, since we want fetching a batch to be fast
             - Therefore, we want all filenames and labels to be determined before training
             - This saves work, because we will be fetching batches multiple times (across epochs)
@@ -308,7 +308,7 @@ class DataGeneratorNpyNoise(tf.keras.utils.Sequence):
 
             # average all the bands per patch together.
             average = np.average(s2_patch, axis=0)
-            # Reshape it so that the CNN model can take the data in. 11 is the number of channels.
+            # Reshape it so that the CNN corrupted_model can take the data in. 11 is the number of channels.
             # average = tf.image.per_image_standardization(average).numpy()
             average = average.reshape(256, 256, 11)
             batch_x.append(average)
@@ -340,7 +340,7 @@ if __name__ == '__main__':
     # with strategy.scope():
     base_model = tf.keras.applications.resnet50.ResNet50(include_top=False, weights=None, input_shape=(256, 256, 11))
     base_weights = tf.keras.applications.resnet50.ResNet50(include_top=False, weights='imagenet', input_shape=(256, 256, 3))
-    # Create model
+    # Create corrupted_model
     model = create_model(base_model, base_weights)
 
     # Get patch names to feed in data generator.
@@ -357,7 +357,7 @@ if __name__ == '__main__':
         save_best_only=True
     )
 
-    # # Use data generator to fit on model
+    # # Use data generator to fit on corrupted_model
     model.compile(optimizer="adam", loss=tf.keras.losses.MeanSquaredError(),
                   metrics=[tf.keras.metrics.RootMeanSquaredError()])
     model.fit(datagen, epochs=125, verbose=1, callbacks=[model_checkpoint_callback], max_queue_size=25, workers=50, use_multiprocessing=False)

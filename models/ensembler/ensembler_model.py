@@ -1,11 +1,12 @@
 # ensemble_model =
-# 	- 180 datapoints in model
-# 	- 3 weights out of model (x1, x2, x3)
+# 	- 180 datapoints in corrupted_model
+# 	- 3 weights out of corrupted_model (x1, x2, x3)
 #
 # prediction =
 # 	- x1 * (inference swin_transformer) + x2 * (inference segmenter) + x3 *  (inference pixel_wise)
-# 	- then calculate and backpropagate model over ensemble_model
+# 	- then calculate and backpropagate corrupted_model over ensemble_model
 import csv
+import os
 import time
 
 import numpy as np
@@ -20,10 +21,13 @@ import data
 from data import imgs
 from models import tb_logs
 from models.ensembler.patchnames_dataloader import PatchNameDatasetTrain, PatchNameDatasetTest
+from models.utils.discretize_prediction_pixels import discretize_prediction_pixels
 from models.utils.loss_functions import rmse_loss
 import os.path as osp
 import json
 from multiprocessing import Pool
+from functools import partial
+
 import warnings
 
 # ignore the NotGeoreferencedWarning
@@ -40,11 +44,11 @@ def bar(curr_step, total_steps, bar_length=30):
     return f"[{'#' * filled}{'.' * (bar_length - filled)}]"
 
 
-def train_and_eval(model, train_loader, valid_loader, optimizer, criterion, epochs=10, log_freq=100):
+def train_and_eval(corrupted_model, train_loader, valid_loader, optimizer, criterion, epochs=10, log_freq=100):
     """
     Train and evaluate the model.
 
-    @param model: (torch.nn.Module) model to train
+    @param corrupted_model: (torch.nn.Module) model to train
     @param train_loader: (torch.utils.data.DataLoader) train dataloader
     @param valid_loader: (torch.utils.data.DataLoader) validation dataloader
     @param optimizer: (torch.optim) optimizer
@@ -62,24 +66,25 @@ def train_and_eval(model, train_loader, valid_loader, optimizer, criterion, epoc
     patch_names = patch_name_data[0]
 
     predictions_dict = create_predictions_dict(["train_swinres_agbm", "train_swinefficientnet_agbm"], patch_names)
-    metadata_dict = create_metadata_dict()
+    corrupted_metadata_dict = create_metadata_dict("train_corruptedness_values.json")
 
     for epoch in range(epochs):
 
         epochtic = time.perf_counter()
 
         # Training loop
-        model.train()
+        corrupted_model.train()
         train_loss = []
         for epoch_step, (patch_names_batch, agbms_batch) in enumerate(train_loader):
             # ======== TRAINING ========
-            metadata = retrieve_metadata_batch(patch_names_batch, metadata_dict)
+            corrupted_metadata = retrieve_metadata_batch(patch_names_batch, corrupted_metadata_dict)
 
             # 1. Move the tensors to the configured device.
-            agbms_batch, metadata, model = agbms_batch.to(DEVICE), metadata.to(DEVICE), model.to(DEVICE)
+            agbms_batch, corrupted_metadata, corrupted_model = agbms_batch.to(DEVICE), corrupted_metadata.to(
+                DEVICE), corrupted_model.to(DEVICE)
 
-            # 2. Forward pass by passing the images through the model.
-            w1, w2, w3 = torch.tensor_split(model(metadata), 3, dim=1)
+            # 2. Forward pass by passing the images through the corrupted_model.
+            w1, w2, w3 = torch.tensor_split(corrupted_model(corrupted_metadata), 3, dim=1)
             w1, w2, w3 = w1.view(-1, 1, 1, 1), w2.view(-1, 1, 1, 1), w3.view(-1, 1, 1, 1)
             preds_batch = (w1 * retrieve_predictions_batch("train_swinres_agbm", patch_names_batch,
                                                            predictions_dict).to(
@@ -89,13 +94,13 @@ def train_and_eval(model, train_loader, valid_loader, optimizer, criterion, epoc
                                   w3 * retrieve_predictions_batch("train_swinefficientnet_agbm", patch_names_batch,
                                                                   predictions_dict).to(DEVICE))
 
-            # 3. Zero the gradients of all model parameters.
+            # 3. Zero the gradients of all corrupted_model parameters.
             optimizer.zero_grad()
             # 4. Compute the loss.
             loss = criterion(preds_batch, agbms_batch)
-            # 5. Backward pass to compute the gradients of the loss w.r.t. the model parameters.
+            # 5. Backward pass to compute the gradients of the loss w.r.t. the corrupted_model parameters.
             loss.backward()
-            # 6. Step the optimizer to update the model parameters.
+            # 6. Step the optimizer to update the corrupted_model parameters.
             optimizer.step()
             # =========================
 
@@ -107,19 +112,20 @@ def train_and_eval(model, train_loader, valid_loader, optimizer, criterion, epoc
                     f"Epoch {epoch + 1:2d}/{epochs:2d} {bar(epoch_step + 1, len(train_loader))} Train-Loss: {np.mean(train_loss):.4f} \r")
 
         # Evaluation loop
-        model.eval()
+        corrupted_model.eval()
         valid_loss = []
         with torch.no_grad():
             for epoch_step, (patch_names_batch, agbms_batch) in enumerate(valid_loader):
 
                 # ======== VALIDATION ========
-                metadata = retrieve_metadata_batch(patch_names_batch, metadata_dict)
+                corrupted_metadata = retrieve_metadata_batch(patch_names_batch, corrupted_metadata_dict)
 
                 # 1. Move the tensors to the configured device.
-                agbms_batch, metadata, model = agbms_batch.to(DEVICE), metadata.to(DEVICE), model.to(DEVICE)
+                agbms_batch, corrupted_metadata, corrupted_model = agbms_batch.to(DEVICE), corrupted_metadata.to(
+                    DEVICE), corrupted_model.to(DEVICE)
 
-                # 2. Forward pass by passing the images through the model.
-                w1, w2, w3 = torch.tensor_split(model(metadata), 3, dim=1)
+                # 2. Forward pass by passing the images through the corrupted_model.
+                w1, w2, w3 = torch.tensor_split(corrupted_model(corrupted_metadata), 3, dim=1)
                 w1, w2, w3 = w1.view(-1, 1, 1, 1), w2.view(-1, 1, 1, 1), w3.view(-1, 1, 1, 1)
                 preds_batch = (w1 * retrieve_predictions_batch("train_swinres_agbm", patch_names_batch,
                                                                predictions_dict).to(
@@ -149,13 +155,13 @@ def train_and_eval(model, train_loader, valid_loader, optimizer, criterion, epoc
 
         if epoch % 5 == 0:
             model_save_path = osp.join(osp.dirname(tb_logs.__file__), "ensembler_model",
-                                       f"epoch_{epoch}_{np.round(np.mean(train_loss), 2)}_{np.round(np.mean(valid_loss), 2)}")
+                                       f"epoch_{epoch}_{np.round(np.mean(train_loss), 1)}_{np.round(np.mean(valid_loss), 1)}_model.pth")
             if DEVICE != "cpu":
-                model.cpu()
-                torch.save(model.state_dict(), model_save_path)
-                model.cuda()
+                corrupted_model.cpu()
+                torch.save(corrupted_model.state_dict(), model_save_path)
+                corrupted_model.cuda()
             else:
-                torch.save(model.state_dict(), model_save_path)
+                torch.save(corrupted_model.state_dict(), model_save_path)
 
         epochtoc = time.perf_counter()
 
@@ -210,9 +216,9 @@ def create_predictions_dict(model_names, patch_names):
     return predictions_dict
 
 
-def create_metadata_dict():
+def create_metadata_dict(filename):
     print("Creating metadata dictionary...")
-    with open(osp.join(osp.dirname(data.__file__), "train_corruptedness_values.json"), "r") as f:
+    with open(osp.join(osp.dirname(data.__file__), filename), "r") as f:
         content = f.read()
         metadata_dict = json.loads(content)
     print("Done!")
@@ -255,52 +261,69 @@ def create_agbms_dict():
     return agbms_dict
 
 
-def create_test_metadata_dict():
-    print("Creating test metadata dictionary...")
-    with open(osp.join(osp.dirname(data.__file__), "test_corruptedness_values.json"), "r") as f:
-        content = f.read()
-        metadata_dict = json.loads(content)
-    print("Done!")
-    return metadata_dict
+from functools import partial
 
 
-def create_submission(model_name):
+def create_submission(model_name, discretize_pixels, discrete_pixel_values):
+    print("Creating submission...")
     path_patch_names = osp.join(osp.dirname(data.__file__), "test_patch_names")
     with open(path_patch_names, newline='') as f:
         reader = csv.reader(f)
         patch_name_data = list(reader)
     patch_names = patch_name_data[0]
+
     model_names = ["test_swinres_agbm", "test_swinefficientnet_agbm"]
 
     model_save_path = osp.join(osp.dirname(tb_logs.__file__), "ensembler_model", model_name)
-    model = torch.load(model_save_path)
+    corruption_model = create_metadata_model(180, 1, 3)
+    corruption_model.load_state_dict(torch.load(model_save_path))
+    corruption_model.eval()
 
-    test_metadata_dict = create_test_metadata_dict()
+    test_corrupted_metadata_dict = create_metadata_dict("test_corruptedness_values.json")
     test_predictions_dict = create_predictions_dict(model_names, patch_names)
 
     test_dataloader = DataLoader(PatchNameDatasetTest(), batch_size=1)
 
-    for patch_names_batch in test_dataloader:
-        metadata = retrieve_metadata_batch(patch_names_batch, test_metadata_dict)
+    with Pool(os.cpu_count() - 1) as pool:
+        pool.map(partial(discretize_and_save, test_corrupted_metadata_dict=test_corrupted_metadata_dict,
+                         model=corruption_model, test_predictions_dict=test_predictions_dict,
+                         discretize_pixels=discretize_pixels, discrete_pixel_values=discrete_pixel_values),
+                 test_dataloader)
 
-        # 1. Move the tensors to the configured device.
-        metadata, model = metadata.to(DEVICE), model.to(DEVICE)
+    print("Done!")
 
-        # 2. Forward pass by passing the images through the model.
-        w1, w2, w3 = torch.tensor_split(model(metadata), 3, dim=1)
-        w1, w2, w3 = w1.view(-1, 1, 1, 1), w2.view(-1, 1, 1, 1), w3.view(-1, 1, 1, 1)
-        preds_batch = (w1 * retrieve_predictions_batch("test_swinres_agbm", patch_names_batch,
-                                                       test_predictions_dict).to(
-            DEVICE)) + (
-                              w2 * retrieve_predictions_batch("test_swinres_agbm", patch_names_batch,
-                                                              test_predictions_dict).to(DEVICE)) + (
-                              w3 * retrieve_predictions_batch("test_swinefficientnet_agbm", patch_names_batch,
-                                                              test_predictions_dict).to(DEVICE))
 
-        test_agbm_path = osp.join(osp.dirname(imgs.__file__), "test_ensemble_agbm", f"{patch_names_batch[0]}_agbm.tif")
+def discretize_and_save(patch_names_batch, test_corrupted_metadata_dict, model, test_predictions_dict,
+                        discretize_pixels, discrete_pixel_values):
+    metadata = retrieve_metadata_batch(patch_names_batch, test_corrupted_metadata_dict)
 
-        im = Image.fromarray(np.asarray(preds_batch[0]))
-        im.save(test_agbm_path)
+    # 1. Move the tensors to the configured device.
+    metadata, model = metadata.to(DEVICE), model.to(DEVICE)
+
+    # 2. Forward pass by passing the images through the corrupted_model.
+    w1, w2, w3 = torch.tensor_split(model(metadata), 3, dim=1)
+    w1, w2, w3 = w1.view(-1, 1, 1, 1), w2.view(-1, 1, 1, 1), w3.view(-1, 1, 1, 1)
+    preds_batch = (w1 * retrieve_predictions_batch("test_swinres_agbm", patch_names_batch,
+                                                   test_predictions_dict).to(DEVICE)) \
+                  + (w2 * retrieve_predictions_batch("test_swinres_agbm", patch_names_batch,
+                                                     test_predictions_dict).to(DEVICE)) \
+                  + (w3 * retrieve_predictions_batch("test_swinefficientnet_agbm", patch_names_batch,
+                                                     test_predictions_dict).to(DEVICE))
+
+    test_agbm_path = osp.join(osp.dirname(imgs.__file__), "test_ensemble_agbm", f"{patch_names_batch[0]}_agbm.tif")
+
+    pred_array = np.asarray(preds_batch[0][0].cpu().detach().numpy())
+    if discretize_pixels:
+        pred_array = map_to_closest_values(pred_array, discrete_pixel_values)
+
+    im = Image.fromarray(pred_array)
+    im.save(test_agbm_path)
+    print(f"patch {patch_names_batch[0]} saved")
+
+
+def map_to_closest_values(array, discrete_values):
+    idx = np.argmin(np.abs(discrete_values - array.flatten()[:, np.newaxis]), axis=1)
+    return np.take(discrete_values, idx).reshape(array.shape)
 
 
 if __name__ == '__main__':
@@ -308,8 +331,8 @@ if __name__ == '__main__':
     # n_hidden = 180
     # weights_dim = 3
     # learning_rate = 1e-4
-    # metadata_model = create_metadata_model(metadata_dim=metadata_dim, n_hidden=n_hidden, weights_dim=weights_dim)
-    # optimizer = torch.optim.SGD(metadata_model.parameters(), lr=learning_rate)
+    # corrupted_metadata_model = create_metadata_model(metadata_dim=metadata_dim, n_hidden=n_hidden, weights_dim=weights_dim)
+    # optimizer = torch.optim.SGD(corrupted_metadata_model.parameters(), lr=learning_rate)
     # loss_function = rmse_loss
     # epochs = 100
     # num_workers = 20  # up to 24
@@ -321,12 +344,26 @@ if __name__ == '__main__':
     # agbms_dict = create_agbms_dict()
     # train_loader, valid_loader = create_train_val_dataloaders(num_workers=num_workers, batch_size=batch_size,
     #                                                           agbms_dict=agbms_dict)
-
-    # train_and_eval(model=metadata_model,
+    # warm_start = True
+    # if warm_start:
+    #     model_save_path = osp.join(osp.dirname(tb_logs.__file__), "ensembler_model", "epoch_5_30.6_30.1_model.pth")
+    #     corrupted_metadata_model.load_state_dict(torch.load(model_save_path))
+    #
+    # train_and_eval(corrupted_model=corrupted_metadata_model,
     #                train_loader=train_loader,
     #                valid_loader=valid_loader,
     #                optimizer=optimizer,
     #                criterion=loss_function,
     #                epochs=epochs, log_freq=5)
 
-    create_submission(model_name="epoch_0_32.6_30.96")
+    discretize_pixels = False
+    if discretize_pixels:
+        with open(osp.join(osp.dirname(data.__file__), 'label_discrete_pixels'), newline='') as f:
+            reader = csv.reader(f)
+            discrete_pixel_data = list(reader)
+        discrete_pixel_values = sorted(map(lambda x: float(x), list(set(discrete_pixel_data[0]))))
+    else:
+        discrete_pixel_values = []
+
+    create_submission(model_name="epoch_5_30.6_30.1_model.pth", discretize_pixels=discretize_pixels,
+                      discrete_pixel_values=discrete_pixel_values)
