@@ -55,7 +55,6 @@ class Sentinel2Model(pl.LightningModule):
     def validation_step(self, batch, batch_idx):
         x, y = batch
         y_hat = self.model(x)
-        # transformed_y_hat = torch.tensor(np.clip(y_hat.cpu().squeeze().detach().numpy(), a_min=0, a_max=500))
         loss = self.loss_function(y_hat, y)
         self.log("val/loss", loss)
         return loss
@@ -282,7 +281,7 @@ def set_args():
     version = -1  # Keep -1 if loading the latest model version.
     save_top_k_checkpoints = 3
     transform_method = "replace_corrupted_0s"  # "replace_corrupted_noise"  # nothing  # add_band_corrupted_arrays
-    train_loss_function = loss_functions.huber_loss
+    train_loss_function = loss_functions.rmsle_loss
     val_loss_function = loss_functions.rmse_loss
     predicting_train_set = True
 
