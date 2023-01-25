@@ -5,6 +5,9 @@
 # prediction =
 # 	- x1 * (inference swin_transformer) + x2 * (inference segmenter) + x3 *  (inference pixel_wise)
 # 	- then calculate and backpropagate model over ensemble_model
+import csv
+import time
+
 import numpy as np
 import rasterio
 import torch
@@ -13,10 +16,16 @@ from torch.utils.data import DataLoader
 
 import data
 from data import imgs
+from models import tb_logs
 from models.ensembler.patchnames_dataloader import PatchNameDatasetTrain
 from models.utils.loss_functions import rmse_loss
 import os.path as osp
 import json
+from multiprocessing import Pool
+import warnings
+
+# ignore the NotGeoreferencedWarning
+warnings.filterwarnings("ignore", category=UserWarning, module='rasterio')
 
 DEVICE = torch.device("cuda:1" if torch.cuda.is_available() else "cpu")
 
@@ -48,7 +57,14 @@ def train_and_eval(model, train_loader, valid_loader, optimizer, criterion, epoc
     global_train_loss, global_valid_loss = [], []
     best_train_loss, best_valid_loss = 100, 100
 
+    print("Creating predictions dictionary...")
+    predictions_dict = create_predictions_dict(["swinres_agbm", "swinefficientnet_agbm"])
+    print("Done!")
+
     for epoch in range(epochs):
+
+        epochtic = time.perf_counter()
+
         # Training loop
         model.train()
         train_loss = []
@@ -62,9 +78,13 @@ def train_and_eval(model, train_loader, valid_loader, optimizer, criterion, epoc
             # 2. Forward pass by passing the images through the model.
             w1, w2, w3 = torch.tensor_split(model(metadata), 3, dim=1)
             w1, w2, w3 = w1.view(-1, 1, 1, 1), w2.view(-1, 1, 1, 1), w3.view(-1, 1, 1, 1)
-            preds_batch = (w1 * retrieve_predictions_batch("swinres_agbm", patch_names_batch).to(DEVICE)) + (
-                    w2 * retrieve_predictions_batch("swinres_agbm", patch_names_batch).to(DEVICE)) + (
-                                  w3 * retrieve_predictions_batch("swinefficientnet_agbm", patch_names_batch).to(DEVICE))
+            preds_batch = (w1 * retrieve_predictions_batch("swinres_agbm", patch_names_batch, predictions_dict).to(
+                DEVICE)) + (
+                                  w2 * retrieve_predictions_batch("swinres_agbm", patch_names_batch,
+                                                                  predictions_dict).to(DEVICE)) + (
+                                  w3 * retrieve_predictions_batch("swinefficientnet_agbm", patch_names_batch,
+                                                                  predictions_dict).to(
+                              DEVICE))
 
             # 3. Zero the gradients of all model parameters.
             optimizer.zero_grad()
@@ -80,7 +100,8 @@ def train_and_eval(model, train_loader, valid_loader, optimizer, criterion, epoc
             train_loss.append(loss.item())
 
             if epoch_step % log_freq == 0 or epoch_step == len(train_loader) - 1:
-                print(f"Epoch {epoch + 1:2d}/{epochs:2d} {bar(epoch_step + 1, len(train_loader))} Train-Loss: {np.mean(train_loss):.4f} \r")
+                print(
+                    f"Epoch {epoch + 1:2d}/{epochs:2d} {bar(epoch_step + 1, len(train_loader))} Train-Loss: {np.mean(train_loss):.4f} \r")
 
         # Evaluation loop
         model.eval()
@@ -97,9 +118,12 @@ def train_and_eval(model, train_loader, valid_loader, optimizer, criterion, epoc
                 # 2. Forward pass by passing the images through the model.
                 w1, w2, w3 = torch.tensor_split(model(metadata), 3, dim=1)
                 w1, w2, w3 = w1.view(-1, 1, 1, 1), w2.view(-1, 1, 1, 1), w3.view(-1, 1, 1, 1)
-                preds_batch = (w1 * retrieve_predictions_batch("swinres_agbm", patch_names_batch).to(DEVICE)) + (
-                        w2 * retrieve_predictions_batch("swinres_agbm", patch_names_batch).to(DEVICE)) + (
-                                      w3 * retrieve_predictions_batch("swinefficientnet_agbm", patch_names_batch).to(
+                preds_batch = (w1 * retrieve_predictions_batch("swinres_agbm", patch_names_batch, predictions_dict).to(
+                    DEVICE)) + (
+                                      w2 * retrieve_predictions_batch("swinres_agbm", patch_names_batch,
+                                                                      predictions_dict).to(DEVICE)) + (
+                                      w3 * retrieve_predictions_batch("swinefficientnet_agbm", patch_names_batch,
+                                                                      predictions_dict).to(
                                   DEVICE))
 
                 # 3. Compute the loss.
@@ -111,13 +135,28 @@ def train_and_eval(model, train_loader, valid_loader, optimizer, criterion, epoc
                 valid_loss.append(loss.item())
 
                 if epoch_step % log_freq == 0 or epoch_step == len(valid_loader) - 1:
-                    print(f"Epoch {epoch + 1:2d}/{epochs:2d} {bar(epoch_step + 1, len(valid_loader))} Valid-Loss: {np.mean(valid_loss):.4f} \r")
+                    print(
+                        f"Epoch {epoch + 1:2d}/{epochs:2d} {bar(epoch_step + 1, len(valid_loader))} Valid-Loss: {np.mean(valid_loss):.4f} \r")
 
         global_train_loss.extend(train_loss)
         global_valid_loss.extend(valid_loss)
         best_train_loss = min(best_train_loss, np.mean(train_loss))
         best_valid_loss = min(best_valid_loss, np.mean(valid_loss))
         print(f"Best Train Loss: {best_train_loss} Best Valid Loss: {best_valid_loss}")
+
+        if epoch % 5 == 0:
+            model_save_path = osp.join(osp.dirname(tb_logs.__file__), "ensembler_model",
+                                       f"epoch_{epoch}_{np.round(np.mean(train_loss), 2)}_{np.round(np.mean(valid_loss), 2)}")
+            if DEVICE != "cpu":
+                model.cpu()
+                torch.save(model.state_dict(), model_save_path)
+                model.cuda()
+            else:
+                torch.save(model.state_dict(), model_save_path)
+
+        epochtoc = time.perf_counter()
+
+        print(f"Epoch time: {epochtoc - epochtic:0.4f} seconds")
 
     return global_train_loss, global_valid_loss
 
@@ -131,7 +170,6 @@ def create_metadata_model(metadata_dim, n_hidden, weights_dim):
                          nn.Softmax(1))
 
 
-
 def create_train_val_dataloaders(num_workers, batch_size):
     print("Creating dataloaders...")
 
@@ -143,17 +181,39 @@ def create_train_val_dataloaders(num_workers, batch_size):
 
     dataloader_train = DataLoader(dataset_train, batch_size=batch_size, shuffle=True, num_workers=num_workers)
     dataloader_val = DataLoader(dataset_val, batch_size=batch_size, shuffle=True, num_workers=num_workers)
-
+    print("Done!")
     return dataloader_train, dataloader_val
 
 
-def retrieve_predictions_batch(model_name, patch_names):
+def retrieve_predictions_batch(model_name, patch_names, predictions_dict):
     preds = []
     for patch_name in patch_names:
-        prediction_path = osp.join(osp.dirname(imgs.__file__), model_name, f"{patch_name}_agbm.tif")
-        preds.append(rasterio.open(prediction_path).read().astype(np.float32))
-    preds = torch.tensor(np.array(preds))
+        # prediction_path = osp.join(osp.dirname(imgs.__file__), model_name, f"{patch_name}_agbm.tif")
+        # preds.append(rasterio.open(prediction_path).read().astype(np.float32))
+        preds.append(predictions_dict[model_name][patch_name])
+    preds = torch.from_numpy(np.array(preds))
     return preds
+
+
+def create_predictions_dict(model_names):
+    path_patch_names = osp.join(osp.dirname(data.__file__), "patch_names")
+    with open(path_patch_names, newline='') as f:
+        reader = csv.reader(f)
+        patch_name_data = list(reader)
+    patch_names = patch_name_data[0]
+
+    with Pool() as pool:
+        predictions_dict = {
+            model_name: pool.map(load_predictions, [(model_name, patch_name) for patch_name in patch_names]) for
+            model_name in model_names}
+
+    return predictions_dict
+
+
+def load_predictions(args):
+    model_name, patch_name = args
+    prediction_path = osp.join(osp.dirname(imgs.__file__), model_name, f"{patch_name}_agbm.tif")
+    return (patch_name, rasterio.open(prediction_path).read().astype(np.float32))
 
 
 def retrieve_metadata_batch(patch_names):
@@ -173,12 +233,15 @@ if __name__ == '__main__':
     optimizer = torch.optim.SGD(metadata_model.parameters(), lr=learning_rate)
     loss_function = rmse_loss
     epochs = 100
+    warm_start = True
+    version = 1
+    num_workers = 20  # up to 24
 
     batch_size = 16
     image_size = 256
     placeholder = (lambda x: torch.rand((x.shape[0], image_size, image_size)))
 
-    train_loader, valid_loader = create_train_val_dataloaders(num_workers=20, batch_size=batch_size)
+    train_loader, valid_loader = create_train_val_dataloaders(num_workers=num_workers, batch_size=batch_size)
 
     train_and_eval(model=metadata_model,
                    train_loader=train_loader,
