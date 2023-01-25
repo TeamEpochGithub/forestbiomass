@@ -88,7 +88,6 @@ class ChainedSegmentationDatasetMaker(Dataset):
 
 
 def albumentation_input_wrapper(images, label_image, augmenter):
-
     return augmenter(image=np.asarray(images), mask=label_image)
 
 
@@ -436,13 +435,37 @@ def train(args):
         strategy=strategy
     )
 
-    trainer.fit(model, train_dataloaders=train_dataloader, val_dataloaders=valid_dataloader)
+    if args.warm_start:
+
+        assert osp.exists(args.current_model_path) is True, "requested model does not exist"
+
+        log_folder_path = args.current_model_path
+
+        version_dir = list(os.scandir(log_folder_path))[args.model_version]
+
+        checkpoint_dir_path = osp.join(log_folder_path, version_dir, "checkpoints")
+        latest_checkpoint_name = list(os.scandir(checkpoint_dir_path))[-1]
+        latest_checkpoint_path = str(osp.join(checkpoint_dir_path, latest_checkpoint_name))
+
+        print("Starting WARM start.")
+
+        trainer.fit(model,
+                    train_dataloaders=train_dataloader,
+                    val_dataloaders=valid_dataloader,
+                    ckpt_path=latest_checkpoint_path)
+    else:
+        print("Starting COLD start.")
+        trainer.fit(model,
+                    train_dataloaders=train_dataloader,
+                    val_dataloaders=valid_dataloader)
 
     return model
 
 
 def load_model(args):
     print("Getting saved model...")
+
+    print(args.current_model_path)
 
     assert osp.exists(args.current_model_path) is True, "requested model does not exist"
 
@@ -471,7 +494,9 @@ def load_model(args):
                              month_model=month_segmenter_model,
                              learning_rate=args.learning_rate,
                              loss_function=args.loss_function,
-                             repair_mode=args.missing_month_repair_mode)
+                             repair_mode=args.missing_month_repair_mode,
+                             band_count=len(args.band_selection),
+                             month_count=args.month_selection.count(1))
 
     checkpoint = torch.load(str(latest_checkpoint_path))
     model.load_state_dict(checkpoint["state_dict"])
@@ -516,20 +541,20 @@ def submission_generator(args):
 
 
 def set_args():
-    band_segmenter = "Unet++"
-    band_encoder = "efficientnet-b2"
+    band_segmenter = "Unet"
+    band_encoder = "efficientnet-b0"
     band_encoder_weights = "imagenet"
 
     month_segmenter = "Unet++"
-    month_encoder = "efficientnet-b2"
+    month_encoder = "efficientnet-b0"
     month_encoder_weights = "imagenet"
 
     data_type = "tiff"  # options are "npy" or "tiff"
     epochs = 100
     learning_rate = 1e-4
-    dataloader_workers = 16
+    dataloader_workers = 12
     validation_fraction = 0.2
-    batch_size = 8
+    batch_size = 1
     log_step_frequency = 50
     version = -1  # Keep -1 if loading the latest model version.
     save_top_k_checkpoints = 1
@@ -539,6 +564,8 @@ def set_args():
 
     multiprocessing_strategy = None  # replace with ddp if using more than 1 device
     device_count = 1
+
+    warm_start = True
 
     month_selection = {
         "September": 1,
@@ -656,7 +683,7 @@ def set_args():
     parser.add_argument('--training_ids_path', default=str(osp.join(data_path, "patch_names")), type=str)
     parser.add_argument('--testing_ids_path', default=str(osp.join(data_path, "test_patch_names")), type=str)
 
-    parser.add_argument('--current_model_path', default=str(osp.join(models_path, "../tb_logs", model_identifier)),
+    parser.add_argument('--current_model_path', default=str(osp.join(models_path, "tb_logs", model_identifier)),
                         type=str)
     parser.add_argument('--submission_folder_path', default=str(osp.join(data_path, "imgs", "test_agbm")), type=str)
 
@@ -678,6 +705,8 @@ def set_args():
     parser.add_argument('--device_count', default=device_count, type=int)
 
     parser.add_argument('--data_augmentation_pipeline', default=data_augmentation_pipeline)
+
+    parser.add_argument('--warm_start', default=warm_start, type=str)
 
     args = parser.parse_args()
 
