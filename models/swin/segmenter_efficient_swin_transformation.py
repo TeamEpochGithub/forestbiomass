@@ -165,7 +165,7 @@ def train(args):
                                   num_workers=args.dataloader_workers)
 
     # base_model = select_segmenter(args.encoder_weights, args.segmenter_name, args.encoder_name, len(args.bands_to_keep))
-    base_model = Efficient_Swin()
+    base_model = load_model(args)
 
     model = Sentinel2Model(model=base_model, epochs=args.epochs, warmup_epochs=args.warmup_epochs, learning_rate=args.learning_rate, weight_decay=args.weight_decay, loss_function=args.train_loss_function)
 
@@ -204,7 +204,7 @@ def load_model(args):
     version_dir = list(os.scandir(log_folder_path))[args.model_version]
 
     checkpoint_dir_path = osp.join(log_folder_path, version_dir, "checkpoints")
-    latest_checkpoint_name = list(os.scandir(checkpoint_dir_path))[-1]
+    latest_checkpoint_name = list(os.scandir(checkpoint_dir_path))[0]
     latest_checkpoint_path = osp.join(checkpoint_dir_path, latest_checkpoint_name)
 
     base_model = Efficient_Swin()
@@ -343,7 +343,8 @@ def set_args():
 
     parser = argparse.ArgumentParser()
     bands_to_keep_indicator = "bands-" + ''.join(str(x) for x in band_indicator)
-    model_identifier = f"efficientnet_swin_augment{bands_to_keep_indicator}"
+    # model_identifier = f"efficientnet_swin_augment{bands_to_keep_indicator}"
+    model_identifier = f"efficientnet_swin_{bands_to_keep_indicator}"
 
     parser.add_argument('--model_identifier', default=model_identifier, type=str)
     # parser.add_argument('--segmenter_name', default=model_segmenter, type=str)
@@ -354,7 +355,7 @@ def set_args():
 
     data_path = osp.dirname(data.__file__)
     models_path = osp.dirname(models.__file__)
-    # data_path = r"C:\Users\Team Epoch A\Documents\Epoch III\forestbiomass\data"
+    data_path = r"C:\Users\Team Epoch A\Documents\Epoch III\forestbiomass\data"
     # data_path = r"C:\Users\kuipe\OneDrive\Bureaublad\Epoch\forestbiomass\data"
 
     parser.add_argument('--tiff_training_features_path', default=str(osp.join(data_path, "imgs", "train_features")))

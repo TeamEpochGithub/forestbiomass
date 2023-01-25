@@ -86,13 +86,13 @@ class Ensemble_Model(nn.Module):
         self.model11 = Sentinel2Model(model=self.model1, epochs=args.epochs, warmup_epochs=args.warmup_epochs,
                                learning_rate=args.learning_rate, weight_decay=args.weight_decay,
                                loss_function=args.train_loss_function)
-        checkpoint1 = torch.load(str(path_efficient), map_location=torch.device('cpu'))
+        checkpoint1 = torch.load(str(path_efficient))
         self.model11.load_state_dict(checkpoint1["state_dict"],strict=False)
         self.model2 = Res_Swin()
         self.model22 = Sentinel2Model(model=self.model2, epochs=args.epochs, warmup_epochs=args.warmup_epochs,
                                learning_rate=args.learning_rate, weight_decay=args.weight_decay,
                                loss_function=args.train_loss_function)
-        checkpoint2 = torch.load(str(path_resnet), map_location=torch.device('cpu'))
+        checkpoint2 = torch.load(str(path_resnet))
         self.model22.load_state_dict(checkpoint2["state_dict"], strict=False)
         self.conv1 = Conv_3(2, 1, 1, 1, 0)
         self.ff = nn.Conv2d(1, 1, 1, 1, 0)
@@ -193,8 +193,9 @@ def train(args):
     valid_dataloader = DataLoader(val_set, batch_size=args.batch_size, shuffle=False,
                                   num_workers=args.dataloader_workers)
 
-    efficient_ckpt_path = osp.join(osp.dirname(mtb.__file__), 'epoch=105-step=51834.ckpt')
-    res_ckpt_path = osp.join(osp.dirname(mtb.__file__), 'epoch=66-step=30954.ckpt')
+    efficient_ckpt_path = r'C:\Users\lvblo\PycharmProjects\forestbiomass\models\tb_logs\efficientnet_swin_bands-111111111101111000000000\version_3\checkpoints\epoch=105-step=51834.ckpt'
+    print("efficient:", efficient_ckpt_path)
+    res_ckpt_path = r'C:\Users\lvblo\PycharmProjects\forestbiomass\models\tb_logs\res_swin_v2_S1-1111_S2-11111111110\version_3\checkpoints\epoch=66-step=30954.ckpt'
     # base_model = select_segmenter(args.encoder_weights, args.segmenter_name, args.encoder_name, len(args.bands_to_keep))
     base_model = Ensemble_Model(efficient_ckpt_path, res_ckpt_path, args)
 
@@ -215,7 +216,7 @@ def train(args):
         log_every_n_steps=args.log_step_frequency,
         callbacks=[checkpoint_callback],
         num_sanity_val_steps=0,
-        accelerator='cpu',
+        accelerator='gpu',
         devices=1,
         # num_nodes=4,
         # strategy=ddp
@@ -226,7 +227,7 @@ def train(args):
     return str(trainer.callback_metrics['val/loss'].item())
 
 
-def load_model(args):
+def load_model(args): 
     print("Getting saved model...")
 
     assert osp.exists(args.current_model_path) is True, "requested model does not exist"
@@ -238,8 +239,8 @@ def load_model(args):
     latest_checkpoint_name = list(os.scandir(checkpoint_dir_path))[0]
     latest_checkpoint_path = osp.join(checkpoint_dir_path, latest_checkpoint_name)
 
-    efficient_ckpt_path = osp.join(osp.dirname(mtb.__file__), 'epoch=105-step=51834.ckpt')
-    res_ckpt_path = osp.join(osp.dirname(mtb.__file__), 'epoch=66-step=30954.ckpt')
+    efficient_ckpt_path = osp.join(osp.dirname(mtb.__file__), "epoch=105-step=51834.ckpt")
+    res_ckpt_path = osp.join(osp.dirname(mtb.__file__), "epoch=66-step=30954.ckpt")
     # base_model = select_segmenter(args.encoder_weights, args.segmenter_name, args.encoder_name, len(args.bands_to_keep))
     base_model = Ensemble_Model(efficient_ckpt_path, res_ckpt_path, args)
 
@@ -305,7 +306,7 @@ def set_args():
     warmup_epochs = 20
     learning_rate = 3e-4
     weight_decay = 5e-5
-    dataloader_workers = 2
+    dataloader_workers = 16
     validation_fraction = 0.1
     batch_size = 16
     log_step_frequency = 200
@@ -366,7 +367,7 @@ def set_args():
 
     data_path = osp.dirname(data.__file__)
     models_path = osp.dirname(models.__file__)
-    # data_path = r"C:\Users\Team Epoch A\Documents\Epoch III\forestbiomass\data"
+    data_path = r"C:\Users\Team Epoch A\Documents\Epoch III\forestbiomass\data"
     # data_path = r"C:\Users\kuipe\OneDrive\Bureaublad\Epoch\forestbiomass\data"
 
     parser.add_argument('--tiff_training_features_path', default=str(osp.join(data_path, "imgs", "train_features")))
