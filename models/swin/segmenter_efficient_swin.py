@@ -229,7 +229,7 @@ def load_model(args):
     model = Sentinel2Model(model=base_model, epochs=args.epochs, warmup_epochs=args.warmup_epochs,
                            learning_rate=args.learning_rate, weight_decay=args.weight_decay,
                            loss_function=args.train_loss_function)
-
+    print("hello")
     checkpoint = torch.load(str(latest_checkpoint_path))
     # print(checkpoint["state_dict"])
     print(str(latest_checkpoint_path))
@@ -272,15 +272,15 @@ def set_args():
     warmup_epochs = 20
     learning_rate = 3e-4
     weight_decay = 5e-5
-    dataloader_workers = 22
+    dataloader_workers = 32
     validation_fraction = 0.1
-    batch_size = 16
+    batch_size = 4
     log_step_frequency = 200
     version = -1  # Keep -1 if loading the latest model version.
     save_top_k_checkpoints = 3
     transform_method = "replace_corrupted_0s"  # "replace_corrupted_noise"  # nothing  # add_band_corrupted_arrays
-    train_loss_function = loss_functions.rmse_loss
-    val_loss_function = loss_functions.rmse_loss
+    train_loss_function = loss_functions.huber_loss
+    val_loss_function = loss_functions.huber_loss
     predicting_train_set = True
 
     # WARNING: Only increment extra_channels when making predictions/submission (based on the transform method used)
@@ -337,7 +337,8 @@ def set_args():
 
     data_path = osp.dirname(data.__file__)
     models_path = osp.dirname(models.__file__)
-    data_path = r"C:\Users\Team Epoch A\Documents\Epoch III\forestbiomass\data"
+    # data_path = r"C:\Users\kuipe\OneDrive\Bureaublad\Epoch\forestbiomass\data"
+    # data_path = r"C:\Users\Team Epoch A\Documents\Epoch III\forestbiomass\data"
 
     parser.add_argument('--tiff_training_features_path', default=str(osp.join(data_path, "imgs", "train_features")))
     parser.add_argument('--tiff_training_labels_path', default=str(osp.join(data_path, "imgs", "train_agbm")))
@@ -345,7 +346,7 @@ def set_args():
 
     if predicting_train_set:
         parser.add_argument('--tiff_testing_features_path', default=str(osp.join(data_path, "imgs", "train_features")))
-        parser.add_argument('--testing_ids_path', default=str(osp.join(data_path, "patch_names")), type=str)
+        parser.add_argument('--testing_ids_path', default=str(osp.join(data_path, "test_patch_names")), type=str)
         parser.add_argument('--submission_folder_path',
                             default=str(osp.join(data_path, "imgs", "swinefficientnet_agbm")),  # swinres_agbm, swinefficientnet_agbm
                             type=str)
@@ -381,7 +382,7 @@ def set_args():
 
 if __name__ == '__main__':
     args = set_args()
-    # score = train(args)
+    score = train(args)
     # print(score)
 
-    create_submissions(args)
+    # create_submissions(args)

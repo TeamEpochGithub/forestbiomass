@@ -24,6 +24,5 @@ conda activate forest
 #conda install -c conda-forge rasterio segmentation-models-pytorch pytorch-lightning torchgeo pillow gdal poppler
 ### =======================================================
 
-
 srun python ../../models/swin/segmenter_efficient_swin.py
 conda deactivate
