@@ -17,6 +17,8 @@ from efficientnet_swin import Efficient_Swin
 import models
 import data
 import csv
+
+from models.swin.res_swin_v2 import Res_Swin
 from models.utils import loss_functions
 import argparse
 import models.utils.transforms as tf
@@ -28,6 +30,7 @@ from models.utils.warmup_scheduler.scheduler import GradualWarmupScheduler
 from models.utils.simple_tensor_accumulate import accumulate_predictions
 
 warnings.filterwarnings("ignore", category=rasterio.errors.NotGeoreferencedWarning)
+
 
 class Sentinel2Model(pl.LightningModule):
     def __init__(self, model, epochs, warmup_epochs, learning_rate, weight_decay, loss_function):
@@ -55,12 +58,13 @@ class Sentinel2Model(pl.LightningModule):
         return loss
 
     def configure_optimizers(self):
-        optimizer = torch.optim.AdamW(self.parameters(), lr=self.learning_rate, betas=(0.9, 0.999), eps=1e-8, weight_decay=self.weight_decay)
+        optimizer = torch.optim.AdamW(self.parameters(), lr=self.learning_rate, betas=(0.9, 0.999), eps=1e-8,
+                                      weight_decay=self.weight_decay)
         scheduler_cosine = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, self.epochs - self.warmup_epochs,
-                                                                eta_min=1e-6)
+                                                                      eta_min=1e-6)
         self.scheduler = GradualWarmupScheduler(optimizer,
-                                           multiplier=1, total_epoch=self.warmup_epochs,
-                                           after_scheduler=scheduler_cosine)
+                                                multiplier=1, total_epoch=self.warmup_epochs,
+                                                after_scheduler=scheduler_cosine)
         return [optimizer], [self.scheduler]
 
     def forward(self, x):
@@ -80,10 +84,10 @@ def prepare_dataset_training(args):
                                                                                     args.bands_to_keep))
 
     new_dataset = SentinelTiffDataloader_all(training_features_path,
-                                         args.tiff_training_labels_path,
-                                         chip_ids,
-                                         args.bands_to_keep,
-                                         corrupted_transform_method, args.channel_num)
+                                             args.tiff_training_labels_path,
+                                             chip_ids,
+                                             args.bands_to_keep,
+                                             corrupted_transform_method, args.channel_num)
 
     return new_dataset
 
@@ -93,6 +97,7 @@ def prepare_dataset_testing(args):
         reader = csv.reader(f)
         patch_name_data = list(reader)
     chip_ids = patch_name_data[0]
+    # chip_ids = chip_ids[0:50]
 
     testing_features_path = args.tiff_testing_features_path
 
@@ -113,10 +118,10 @@ def prepare_dataset_testing(args):
                                                                                     args.bands_to_keep))
 
     new_dataset = SentinelTiffDataloaderSubmission_all(testing_features_path,
-                                                   chip_ids,
-                                                   args.bands_to_keep,
-                                                   corrupted_transform_method,
-                                                   args.channel_num)
+                                                       chip_ids,
+                                                       args.bands_to_keep,
+                                                       corrupted_transform_method,
+                                                       args.channel_num)
     return new_dataset, chip_ids
 
 
@@ -159,7 +164,9 @@ def train(args):
     # base_model = Efficient_Swin()
     base_model = load_model(args)
 
-    model = Sentinel2Model(model=base_model, epochs=args.epochs, warmup_epochs=args.warmup_epochs, learning_rate=args.learning_rate, weight_decay=args.weight_decay, loss_function=args.train_loss_function)
+    model = Sentinel2Model(model=base_model, epochs=args.epochs, warmup_epochs=args.warmup_epochs,
+                           learning_rate=args.learning_rate, weight_decay=args.weight_decay,
+                           loss_function=args.train_loss_function)
 
     logger = TensorBoardLogger("tb_logs", name=args.model_identifier)
 
@@ -200,6 +207,7 @@ def load_model(args):
     latest_checkpoint_path = osp.join(checkpoint_dir_path, latest_checkpoint_name)
 
     base_model = Efficient_Swin()
+    # base_model = Res_Swin()
 
     # This block might be redundant if we can download weights via the python segmentation models library.
     # However, it might be that not all weights are available this way.
@@ -218,7 +226,9 @@ def load_model(args):
 
     ###########################################################
 
-    model = Sentinel2Model(model=base_model, epochs=args.epochs, warmup_epochs=args.warmup_epochs, learning_rate=args.learning_rate, weight_decay=args.weight_decay, loss_function=args.train_loss_function)
+    model = Sentinel2Model(model=base_model, epochs=args.epochs, warmup_epochs=args.warmup_epochs,
+                           learning_rate=args.learning_rate, weight_decay=args.weight_decay,
+                           loss_function=args.train_loss_function)
 
     checkpoint = torch.load(str(latest_checkpoint_path))
     # print(checkpoint["state_dict"])
@@ -230,18 +240,17 @@ def load_model(args):
 
 
 def create_submissions(args):
-
     model = load_model(args)
 
     new_dataset, chip_ids = prepare_dataset_testing(args)
 
-    trainer = Trainer(accelerator="gpu", devices=1)
+    trainer = Trainer(accelerator="gpu", devices=[1])
 
     dl = DataLoader(new_dataset, num_workers=args.dataloader_workers)
 
     predictions = trainer.predict(model, dataloaders=dl)
 
-    transformed_predictions = [x.cpu().squeeze().detach().numpy() for x in predictions]
+    transformed_predictions = [np.clip(x.cpu().squeeze().detach().numpy(), a_min=0, a_max=500) for x in predictions]
     linked_tensor_list = list(zip(chip_ids, transformed_predictions))
     linked_tensor_list = sorted(linked_tensor_list, key=operator.itemgetter(0))
 
@@ -263,7 +272,7 @@ def set_args():
     warmup_epochs = 20
     learning_rate = 3e-4
     weight_decay = 5e-5
-    dataloader_workers = 8
+    dataloader_workers = 22
     validation_fraction = 0.1
     batch_size = 16
     log_step_frequency = 200
@@ -272,6 +281,7 @@ def set_args():
     transform_method = "replace_corrupted_0s"  # "replace_corrupted_noise"  # nothing  # add_band_corrupted_arrays
     train_loss_function = loss_functions.rmse_loss
     val_loss_function = loss_functions.rmse_loss
+    predicting_train_set = True
 
     # WARNING: Only increment extra_channels when making predictions/submission (based on the transform method used)
     # it is automatically incremented during training based on the transform method used (extra channels generated)
@@ -311,16 +321,19 @@ def set_args():
     bands_to_keep = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 11, 12, 13, 14]
     band_indicator = ["1" if k in bands_to_keep else "0" for k, v in band_map.items()]
 
-    parser = argparse.ArgumentParser()
     bands_to_keep_indicator = "bands-" + ''.join(str(x) for x in band_indicator)
-    model_identifier = f"efficientnet_swin_{bands_to_keep_indicator}"
+    # model_identifier = f"efficientnet_swin_{bands_to_keep_indicator}"
 
+    checkpoint_name = "epoch=105-step=51834.ckpt"  # "epoch=105-step=51834.ckpt" , epoch=66-step=30954.ckpt
+    model_identifier = "efficientnet_swin_bands-111111111101111000000000"  # "efficientnet_swin_bands-111111111101111000000000" , res_swin_v2_S1-1111_S2-11111111110
+
+    parser = argparse.ArgumentParser()
     parser.add_argument('--model_identifier', default=model_identifier, type=str)
-    # parser.add_argument('--segmenter_name', default=model_segmenter, type=str)
-    parser.add_argument('--encoder_name', default="efficient_swin", type=str)
-    # parser.add_argument('--encoder_weights', default=model_encoder_weights, type=str)
     parser.add_argument('--model_version', default=version, type=int)
+
+    parser.add_argument('--encoder_name', default="efficient_swin", type=str)
     parser.add_argument('--data_type', default=data_type, type=str)
+    parser.add_argument('--checkpoint_name', default=checkpoint_name, type=str)
 
     data_path = osp.dirname(data.__file__)
     models_path = osp.dirname(models.__file__)
@@ -328,13 +341,21 @@ def set_args():
 
     parser.add_argument('--tiff_training_features_path', default=str(osp.join(data_path, "imgs", "train_features")))
     parser.add_argument('--tiff_training_labels_path', default=str(osp.join(data_path, "imgs", "train_agbm")))
-    parser.add_argument('--tiff_testing_features_path', default=str(osp.join(data_path, "imgs", "test_features")))
-
     parser.add_argument('--training_ids_path', default=str(osp.join(data_path, "patch_names")), type=str)
-    parser.add_argument('--testing_ids_path', default=str(osp.join(data_path, "test_patch_names")), type=str)
+
+    if predicting_train_set:
+        parser.add_argument('--tiff_testing_features_path', default=str(osp.join(data_path, "imgs", "train_features")))
+        parser.add_argument('--testing_ids_path', default=str(osp.join(data_path, "patch_names")), type=str)
+        parser.add_argument('--submission_folder_path',
+                            default=str(osp.join(data_path, "imgs", "swinefficientnet_agbm")),  # swinres_agbm, swinefficientnet_agbm
+                            type=str)
+    else:
+        parser.add_argument('--tiff_testing_features_path', default=str(osp.join(data_path, "imgs", "test_features")))
+        parser.add_argument('--testing_ids_path', default=str(osp.join(data_path, "test_patch_names")), type=str)
+        parser.add_argument('--submission_folder_path', default=str(osp.join(data_path, "imgs", "test_agbm")), type=str)
+
     parser.add_argument('--current_model_path', default=str(osp.join(models_path, "tb_logs", model_identifier)),
                         type=str)
-    parser.add_argument('--submission_folder_path', default=str(osp.join(data_path, "imgs", "test_agbm")), type=str)
 
     parser.add_argument('--dataloader_workers', default=dataloader_workers, type=int)
     parser.add_argument('--batch_size', default=batch_size, type=int)
@@ -360,7 +381,7 @@ def set_args():
 
 if __name__ == '__main__':
     args = set_args()
-    score = train(args)
+    # score = train(args)
     # print(score)
 
-    # create_submissions(args)
+    create_submissions(args)

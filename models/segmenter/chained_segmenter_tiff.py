@@ -1,12 +1,9 @@
 import itertools
 import operator
-import sys
 
 import torch
 from PIL import Image
-import numpy
 from torch.utils.data import Dataset, DataLoader
-from torch import distributed as dist
 import segmentation_models_pytorch as smp
 import os
 import rasterio
@@ -301,8 +298,8 @@ def train(args):
 
     trainer = Trainer(
         accelerator="gpu",
-        devices=4,
-        stategy='dp',
+        devices=2,
+        strategy='dp',
         max_epochs=args.epochs,
         logger=[logger],
         log_every_n_steps=args.log_step_frequency,
@@ -497,10 +494,10 @@ def set_args():
     data_type = "tiff"  # options are "npy" or "tiff"
     epochs = 40
     learning_rate = 1e-5
-    dataloader_workers = 32
+    dataloader_workers = 44
     validation_fraction = 0.2
-    batch_size = 64
-    log_step_frequency = 200
+    batch_size = 16
+    log_step_frequency = 3
     version = -1  # Keep -1 if loading the latest model version.
     save_top_k_checkpoints = 3
     loss_function = loss_functions.rmse_loss
