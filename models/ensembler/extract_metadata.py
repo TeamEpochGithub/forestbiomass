@@ -91,7 +91,7 @@ def save_batch_to_csv(batch_patch_names):
     corruptedness_values = extract_metadata_batch(batch_patch_names).tolist()
     patch_corrupted = zip(batch_patch_names, corruptedness_values)
 
-    csv_path = (osp.join(osp.dirname(data.__file__), "corruptedness_values.csv"))
+    csv_path = (osp.join(osp.dirname(data.__file__), "train_corruptedness_values.csv"))
     with open(csv_path, "a", newline="") as f:
         writer = csv.writer(f)
         writer.writerows(patch_corrupted)

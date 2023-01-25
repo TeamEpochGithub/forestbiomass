@@ -14,7 +14,7 @@ from models.ensembler.utils import get_bands_else_zeros, create_and_normalize_ba
 
 class PatchNameDatasetTrain(Dataset):
 
-    def __init__(self):
+    def __init__(self, agbms_dict):
         self.path_patch_names = osp.join(osp.dirname(data.__file__), "patch_names")
         self.path_train_agbm = osp.join(osp.dirname(imgs.__file__), "train_agbm")
 
@@ -23,14 +23,17 @@ class PatchNameDatasetTrain(Dataset):
             patch_name_data = list(reader)
         self.patch_names = patch_name_data[0]
 
+        self.agbms_dict = agbms_dict
+
     def __len__(self):
         return len(self.patch_names)
 
     def __getitem__(self, idx):
         patch = self.patch_names[idx]
 
-        label_path = osp.join(self.path_train_agbm, f"{patch}_agbm.tif")
-        label_tensor = torch.tensor(rasterio.open(label_path).read().astype(np.float32))
+        # label_path = osp.join(self.path_train_agbm, f"{patch}_agbm.tif")
+        # label_tensor = torch.tensor(rasterio.open(label_path).read().astype(np.float32))
+        label_tensor = torch.tensor(self.agbms_dict[patch])
 
         return patch, label_tensor  # 1, (256, 256)
 

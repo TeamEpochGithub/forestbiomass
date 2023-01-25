@@ -346,7 +346,7 @@ def set_args():
         parser.add_argument('--tiff_testing_features_path', default=str(osp.join(data_path, "imgs", "train_features")))
         parser.add_argument('--testing_ids_path', default=str(osp.join(data_path, "patch_names")), type=str)
         parser.add_argument('--submission_folder_path',
-                            default=str(osp.join(data_path, "imgs", "swinefficientnet_agbm")),  # swinres_agbm, swinefficientnet_agbm
+                            default=str(osp.join(data_path, "imgs", "train_swinefficientnet_agbm")),  # train_swinres_agbm, train_swinefficientnet_agbm
                             type=str)
     else:
         parser.add_argument('--tiff_testing_features_path', default=str(osp.join(data_path, "imgs", "test_features")))

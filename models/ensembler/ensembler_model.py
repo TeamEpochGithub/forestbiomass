@@ -11,13 +11,15 @@ import time
 import numpy as np
 import rasterio
 import torch
+from PIL import Image
 from torch import nn
 from torch.utils.data import DataLoader
+from tqdm import tqdm
 
 import data
 from data import imgs
 from models import tb_logs
-from models.ensembler.patchnames_dataloader import PatchNameDatasetTrain
+from models.ensembler.patchnames_dataloader import PatchNameDatasetTrain, PatchNameDatasetTest
 from models.utils.loss_functions import rmse_loss
 import os.path as osp
 import json
@@ -28,10 +30,6 @@ import warnings
 warnings.filterwarnings("ignore", category=UserWarning, module='rasterio')
 
 DEVICE = torch.device("cuda:1" if torch.cuda.is_available() else "cpu")
-
-with open(osp.join(osp.dirname(data.__file__), "convert_corruptedness.json"), "r") as f:
-    content = f.read()
-    metadata_dict = json.loads(content)
 
 
 def bar(curr_step, total_steps, bar_length=30):
@@ -57,9 +55,14 @@ def train_and_eval(model, train_loader, valid_loader, optimizer, criterion, epoc
     global_train_loss, global_valid_loss = [], []
     best_train_loss, best_valid_loss = 100, 100
 
-    print("Creating predictions dictionary...")
-    predictions_dict = create_predictions_dict(["swinres_agbm", "swinefficientnet_agbm"])
-    print("Done!")
+    path_patch_names = osp.join(osp.dirname(data.__file__), "patch_names")
+    with open(path_patch_names, newline='') as f:
+        reader = csv.reader(f)
+        patch_name_data = list(reader)
+    patch_names = patch_name_data[0]
+
+    predictions_dict = create_predictions_dict(["train_swinres_agbm", "train_swinefficientnet_agbm"], patch_names)
+    metadata_dict = create_metadata_dict()
 
     for epoch in range(epochs):
 
@@ -70,7 +73,7 @@ def train_and_eval(model, train_loader, valid_loader, optimizer, criterion, epoc
         train_loss = []
         for epoch_step, (patch_names_batch, agbms_batch) in enumerate(train_loader):
             # ======== TRAINING ========
-            metadata = retrieve_metadata_batch(patch_names_batch)
+            metadata = retrieve_metadata_batch(patch_names_batch, metadata_dict)
 
             # 1. Move the tensors to the configured device.
             agbms_batch, metadata, model = agbms_batch.to(DEVICE), metadata.to(DEVICE), model.to(DEVICE)
@@ -78,13 +81,13 @@ def train_and_eval(model, train_loader, valid_loader, optimizer, criterion, epoc
             # 2. Forward pass by passing the images through the model.
             w1, w2, w3 = torch.tensor_split(model(metadata), 3, dim=1)
             w1, w2, w3 = w1.view(-1, 1, 1, 1), w2.view(-1, 1, 1, 1), w3.view(-1, 1, 1, 1)
-            preds_batch = (w1 * retrieve_predictions_batch("swinres_agbm", patch_names_batch, predictions_dict).to(
+            preds_batch = (w1 * retrieve_predictions_batch("train_swinres_agbm", patch_names_batch,
+                                                           predictions_dict).to(
                 DEVICE)) + (
-                                  w2 * retrieve_predictions_batch("swinres_agbm", patch_names_batch,
+                                  w2 * retrieve_predictions_batch("train_swinres_agbm", patch_names_batch,
                                                                   predictions_dict).to(DEVICE)) + (
-                                  w3 * retrieve_predictions_batch("swinefficientnet_agbm", patch_names_batch,
-                                                                  predictions_dict).to(
-                              DEVICE))
+                                  w3 * retrieve_predictions_batch("train_swinefficientnet_agbm", patch_names_batch,
+                                                                  predictions_dict).to(DEVICE))
 
             # 3. Zero the gradients of all model parameters.
             optimizer.zero_grad()
@@ -110,7 +113,7 @@ def train_and_eval(model, train_loader, valid_loader, optimizer, criterion, epoc
             for epoch_step, (patch_names_batch, agbms_batch) in enumerate(valid_loader):
 
                 # ======== VALIDATION ========
-                metadata = retrieve_metadata_batch(patch_names_batch)
+                metadata = retrieve_metadata_batch(patch_names_batch, metadata_dict)
 
                 # 1. Move the tensors to the configured device.
                 agbms_batch, metadata, model = agbms_batch.to(DEVICE), metadata.to(DEVICE), model.to(DEVICE)
@@ -118,13 +121,13 @@ def train_and_eval(model, train_loader, valid_loader, optimizer, criterion, epoc
                 # 2. Forward pass by passing the images through the model.
                 w1, w2, w3 = torch.tensor_split(model(metadata), 3, dim=1)
                 w1, w2, w3 = w1.view(-1, 1, 1, 1), w2.view(-1, 1, 1, 1), w3.view(-1, 1, 1, 1)
-                preds_batch = (w1 * retrieve_predictions_batch("swinres_agbm", patch_names_batch, predictions_dict).to(
+                preds_batch = (w1 * retrieve_predictions_batch("train_swinres_agbm", patch_names_batch,
+                                                               predictions_dict).to(
                     DEVICE)) + (
-                                      w2 * retrieve_predictions_batch("swinres_agbm", patch_names_batch,
+                                      w2 * retrieve_predictions_batch("train_swinres_agbm", patch_names_batch,
                                                                       predictions_dict).to(DEVICE)) + (
-                                      w3 * retrieve_predictions_batch("swinefficientnet_agbm", patch_names_batch,
-                                                                      predictions_dict).to(
-                                  DEVICE))
+                                      w3 * retrieve_predictions_batch("train_swinefficientnet_agbm", patch_names_batch,
+                                                                      predictions_dict).to(DEVICE))
 
                 # 3. Compute the loss.
                 loss = criterion(preds_batch, agbms_batch)
@@ -170,10 +173,10 @@ def create_metadata_model(metadata_dim, n_hidden, weights_dim):
                          nn.Softmax(1))
 
 
-def create_train_val_dataloaders(num_workers, batch_size):
+def create_train_val_dataloaders(num_workers, batch_size, agbms_dict):
     print("Creating dataloaders...")
 
-    dataset = PatchNameDatasetTrain()
+    dataset = PatchNameDatasetTrain(agbms_dict)
     train_size = int(0.8 * len(dataset))
     valid_size = len(dataset) - train_size
 
@@ -195,28 +198,34 @@ def retrieve_predictions_batch(model_name, patch_names, predictions_dict):
     return preds
 
 
-def create_predictions_dict(model_names):
-    path_patch_names = osp.join(osp.dirname(data.__file__), "patch_names")
-    with open(path_patch_names, newline='') as f:
-        reader = csv.reader(f)
-        patch_name_data = list(reader)
-    patch_names = patch_name_data[0]
+def create_predictions_dict(model_names, patch_names):
+    print("Creating predictions dictionary...")
 
     with Pool() as pool:
         predictions_dict = {
-            model_name: pool.map(load_predictions, [(model_name, patch_name) for patch_name in patch_names]) for
+            model_name: dict(pool.map(load_predictions, [(model_name, patch_name) for patch_name in patch_names])) for
             model_name in model_names}
+    print("Done!")
 
     return predictions_dict
+
+
+def create_metadata_dict():
+    print("Creating metadata dictionary...")
+    with open(osp.join(osp.dirname(data.__file__), "train_corruptedness_values.json"), "r") as f:
+        content = f.read()
+        metadata_dict = json.loads(content)
+    print("Done!")
+    return metadata_dict
 
 
 def load_predictions(args):
     model_name, patch_name = args
     prediction_path = osp.join(osp.dirname(imgs.__file__), model_name, f"{patch_name}_agbm.tif")
-    return (patch_name, rasterio.open(prediction_path).read().astype(np.float32))
+    return patch_name, rasterio.open(prediction_path).read().astype(np.float32)
 
 
-def retrieve_metadata_batch(patch_names):
+def retrieve_metadata_batch(patch_names, metadata_dict):
     metadatas = []
     for patch_name in patch_names:
         metadatas.append(metadata_dict[patch_name])
@@ -224,28 +233,100 @@ def retrieve_metadata_batch(patch_names):
     return torch.Tensor(metadatas)  # (batch_size, 180)
 
 
+def create_agbms_dict():
+    print("Creating agbm dictionary...")
+
+    path_patch_names = osp.join(osp.dirname(data.__file__), "patch_names")
+    with open(path_patch_names, newline='') as f:
+        reader = csv.reader(f)
+        patch_name_data = list(reader)
+    patch_names = patch_name_data[0]
+
+    with Pool() as pool:
+        agbms_dict = dict(pool.map(load_predictions, [("train_agbm", patch_name) for patch_name in patch_names]))
+
+    # agbms_dict = {}
+    # for patch in patch_names:
+    #     label_path = osp.join(osp.join(osp.dirname(imgs.__file__), "train_agbm"), f"{patch}_agbm.tif")
+    #     label = rasterio.open(label_path).read().astype(np.float32)
+    #     agbms_dict[patch] = label
+    print("Done!")
+
+    return agbms_dict
+
+
+def create_test_metadata_dict():
+    print("Creating test metadata dictionary...")
+    with open(osp.join(osp.dirname(data.__file__), "test_corruptedness_values.json"), "r") as f:
+        content = f.read()
+        metadata_dict = json.loads(content)
+    print("Done!")
+    return metadata_dict
+
+
+def create_submission(model_name):
+    path_patch_names = osp.join(osp.dirname(data.__file__), "test_patch_names")
+    with open(path_patch_names, newline='') as f:
+        reader = csv.reader(f)
+        patch_name_data = list(reader)
+    patch_names = patch_name_data[0]
+    model_names = ["test_swinres_agbm", "test_swinefficientnet_agbm"]
+
+    model_save_path = osp.join(osp.dirname(tb_logs.__file__), "ensembler_model", model_name)
+    model = torch.load(model_save_path)
+
+    test_metadata_dict = create_test_metadata_dict()
+    test_predictions_dict = create_predictions_dict(model_names, patch_names)
+
+    test_dataloader = DataLoader(PatchNameDatasetTest(), batch_size=1)
+
+    for patch_names_batch in test_dataloader:
+        metadata = retrieve_metadata_batch(patch_names_batch, test_metadata_dict)
+
+        # 1. Move the tensors to the configured device.
+        metadata, model = metadata.to(DEVICE), model.to(DEVICE)
+
+        # 2. Forward pass by passing the images through the model.
+        w1, w2, w3 = torch.tensor_split(model(metadata), 3, dim=1)
+        w1, w2, w3 = w1.view(-1, 1, 1, 1), w2.view(-1, 1, 1, 1), w3.view(-1, 1, 1, 1)
+        preds_batch = (w1 * retrieve_predictions_batch("test_swinres_agbm", patch_names_batch,
+                                                       test_predictions_dict).to(
+            DEVICE)) + (
+                              w2 * retrieve_predictions_batch("test_swinres_agbm", patch_names_batch,
+                                                              test_predictions_dict).to(DEVICE)) + (
+                              w3 * retrieve_predictions_batch("test_swinefficientnet_agbm", patch_names_batch,
+                                                              test_predictions_dict).to(DEVICE))
+
+        test_agbm_path = osp.join(osp.dirname(imgs.__file__), "test_ensemble_agbm", f"{patch_names_batch[0]}_agbm.tif")
+
+        im = Image.fromarray(np.asarray(preds_batch[0]))
+        im.save(test_agbm_path)
+
+
 if __name__ == '__main__':
-    metadata_dim = 180
-    n_hidden = 180
-    weights_dim = 3
-    learning_rate = 1e-4
-    metadata_model = create_metadata_model(metadata_dim=metadata_dim, n_hidden=n_hidden, weights_dim=weights_dim)
-    optimizer = torch.optim.SGD(metadata_model.parameters(), lr=learning_rate)
-    loss_function = rmse_loss
-    epochs = 100
-    warm_start = True
-    version = 1
-    num_workers = 20  # up to 24
+    # metadata_dim = 180
+    # n_hidden = 180
+    # weights_dim = 3
+    # learning_rate = 1e-4
+    # metadata_model = create_metadata_model(metadata_dim=metadata_dim, n_hidden=n_hidden, weights_dim=weights_dim)
+    # optimizer = torch.optim.SGD(metadata_model.parameters(), lr=learning_rate)
+    # loss_function = rmse_loss
+    # epochs = 100
+    # num_workers = 20  # up to 24
+    #
+    # batch_size = 16
+    # image_size = 256
+    # placeholder = (lambda x: torch.rand((x.shape[0], image_size, image_size)))
+    #
+    # agbms_dict = create_agbms_dict()
+    # train_loader, valid_loader = create_train_val_dataloaders(num_workers=num_workers, batch_size=batch_size,
+    #                                                           agbms_dict=agbms_dict)
 
-    batch_size = 16
-    image_size = 256
-    placeholder = (lambda x: torch.rand((x.shape[0], image_size, image_size)))
+    # train_and_eval(model=metadata_model,
+    #                train_loader=train_loader,
+    #                valid_loader=valid_loader,
+    #                optimizer=optimizer,
+    #                criterion=loss_function,
+    #                epochs=epochs, log_freq=5)
 
-    train_loader, valid_loader = create_train_val_dataloaders(num_workers=num_workers, batch_size=batch_size)
-
-    train_and_eval(model=metadata_model,
-                   train_loader=train_loader,
-                   valid_loader=valid_loader,
-                   optimizer=optimizer,
-                   criterion=loss_function,
-                   epochs=epochs, log_freq=5)
+    create_submission(model_name="epoch_0_32.6_30.96")

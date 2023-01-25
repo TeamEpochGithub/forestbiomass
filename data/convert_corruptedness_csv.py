@@ -1,6 +1,6 @@
 import json
 
-# csv_path = r"corruptedness_values.csv"
+# csv_path = r"train_corruptedness_values.csv"
 #
 # dicts = dict()
 # with open(csv_path, "r") as f:
@@ -13,7 +13,7 @@ import json
 #         dicts[key] = list(map(lambda x:float(x), item_list))
 #
 # b = json.dumps(dicts)
-# f2 = open("convert_corruptedness.json", "w")
+# f2 = open("train_corruptedness_values.json", "w")
 # f2.write(b)
 # f2.close()
 
