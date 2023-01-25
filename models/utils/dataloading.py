@@ -237,19 +237,21 @@ class SentinelTiffDataloaderSubmission_all(Dataset):
         for month in range(5, 12):
             if month < 10:
                 month = "0" + str(month)
+            month_patch_path = osp.join(self.testing_features_path, f"{current_id}_S2_{month}.tif")
 
-            feature_tensor = retrieve_tiff(self.testing_features_path, current_id, month)
+            if osp.exists(month_patch_path):
+                feature_tensor = retrieve_tiff(self.testing_features_path, current_id, month)
 
-            sample = {'image': feature_tensor}
+                sample = {'image': feature_tensor}
 
-            selected_tensor = apply_transforms_testing(bands_to_keep=self.bands_to_keep,
-                                                       corrupted_transform_method=self.corrupted_transform_method)(
-                sample)
-            if times == 0:
-                data_tensor = selected_tensor['image']
-            else:
-                data_tensor = torch.cat((data_tensor, selected_tensor['image']), dim=0)
-            times += 1
+                selected_tensor = apply_transforms_testing(bands_to_keep=self.bands_to_keep,
+                                                           corrupted_transform_method=self.corrupted_transform_method)(
+                    sample)
+                if times == 0:
+                    data_tensor = selected_tensor['image']
+                else:
+                    data_tensor = torch.cat((data_tensor, selected_tensor['image']), dim=0)
+                times += 1
 
         if data_tensor.shape[0] < self.channel_num:
             indexes = list(range(data_tensor.shape[0]))
