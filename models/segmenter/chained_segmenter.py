@@ -542,11 +542,11 @@ def submission_generator(args):
 
 def set_args():
     band_segmenter = "Unet"
-    band_encoder = "efficientnet-b0"
+    band_encoder = "efficientnet-b4"
     band_encoder_weights = "imagenet"
 
-    month_segmenter = "Unet++"
-    month_encoder = "efficientnet-b0"
+    month_segmenter = "Unet"
+    month_encoder = "efficientnet-b4"
     month_encoder_weights = "imagenet"
 
     data_type = "tiff"  # options are "npy" or "tiff"
