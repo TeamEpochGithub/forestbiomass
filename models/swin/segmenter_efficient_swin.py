@@ -206,7 +206,7 @@ def load_model(args):
     version_dir = list(os.scandir(log_folder_path))[args.model_version]
 
     checkpoint_dir_path = osp.join(log_folder_path, version_dir, "checkpoints")
-    latest_checkpoint_name = list(os.scandir(checkpoint_dir_path))[0]
+    latest_checkpoint_name = args.checkpoint_name
     latest_checkpoint_path = osp.join(checkpoint_dir_path, latest_checkpoint_name)
 
     base_model = Efficient_Swin()
@@ -236,11 +236,11 @@ def load_model(args):
     checkpoint = torch.load(str(latest_checkpoint_path), map_location=torch.device('cpu'))
     # print(checkpoint["state_dict"])
     print(str(latest_checkpoint_path))
-    # check_tmp = checkpoint["state_dict"]
-    # for key in list(check_tmp.keys()):
-    #     if "model." in key:
-    #         check_tmp[key[6:]] = check_tmp[key]
-    #         del check_tmp[key]
+    check_tmp = checkpoint["state_dict"]
+    for key in list(check_tmp.keys()):
+        if "model." in key:
+            check_tmp[key[6:]] = check_tmp[key]
+            del check_tmp[key]
     model.load_state_dict(checkpoint["state_dict"])
 
     print("Model loaded")
