@@ -17,6 +17,8 @@ from efficientnet_swin import Efficient_Swin
 import models
 import data
 import csv
+
+from models.swin.res_swin_v2 import Res_Swin
 from models.utils import loss_functions
 import argparse
 import models.utils.transforms as tf
@@ -30,7 +32,7 @@ from models.utils.simple_tensor_accumulate import accumulate_predictions
 warnings.filterwarnings("ignore", category=rasterio.errors.NotGeoreferencedWarning)
 
 class Sentinel2Model(pl.LightningModule):
-    def __init__(self, model, epochs, warmup_epochs, learning_rate, weight_decay, loss_function):
+    def __init__(self, model, epochs, warmup_epochs, learning_rate, weight_decay, loss_function, val_loss):
         super().__init__()
         self.model = model
         self.epochs = epochs
@@ -38,10 +40,12 @@ class Sentinel2Model(pl.LightningModule):
         self.learning_rate = learning_rate
         self.weight_decay = weight_decay
         self.loss_function = loss_function
+        self.val_loss = val_loss
 
     def training_step(self, batch, batch_idx):
         x, y = batch
         y_hat = self.model(x)
+        y_hat = torch.clip(y_hat, min=0, max=500)
         loss = self.loss_function(y_hat, y)
         self.log("train/loss", loss)
         self.scheduler.step()
@@ -159,7 +163,9 @@ def train(args):
     # base_model = Efficient_Swin()
     base_model = load_model(args)
 
-    model = Sentinel2Model(model=base_model, epochs=args.epochs, warmup_epochs=args.warmup_epochs, learning_rate=args.learning_rate, weight_decay=args.weight_decay, loss_function=args.train_loss_function)
+    model = Sentinel2Model(model=base_model, epochs=args.epochs, warmup_epochs=args.warmup_epochs,
+                           learning_rate=args.learning_rate, weight_decay=args.weight_decay,
+                           loss_function=args.train_loss_function, val_loss=args.val_loss_function)
 
     logger = TensorBoardLogger("tb_logs", name=args.model_identifier)
 
@@ -196,7 +202,7 @@ def load_model(args):
     version_dir = list(os.scandir(log_folder_path))[args.model_version]
 
     checkpoint_dir_path = osp.join(log_folder_path, version_dir, "checkpoints")
-    latest_checkpoint_name = list(os.scandir(checkpoint_dir_path))[2]
+    latest_checkpoint_name = list(os.scandir(checkpoint_dir_path))[0]
     latest_checkpoint_path = osp.join(checkpoint_dir_path, latest_checkpoint_name)
 
     base_model = Efficient_Swin()
@@ -218,8 +224,10 @@ def load_model(args):
 
     ###########################################################
 
-    model = Sentinel2Model(model=base_model, epochs=args.epochs, warmup_epochs=args.warmup_epochs, learning_rate=args.learning_rate, weight_decay=args.weight_decay, loss_function=args.train_loss_function)
-
+    model = Sentinel2Model(model=base_model, epochs=args.epochs, warmup_epochs=args.warmup_epochs,
+                           learning_rate=args.learning_rate, weight_decay=args.weight_decay,
+                           loss_function=args.train_loss_function, val_loss=args.val_loss_function)
+    print("hello")
     checkpoint = torch.load(str(latest_checkpoint_path))
     # print(checkpoint["state_dict"])
     print(str(latest_checkpoint_path))
@@ -320,17 +328,27 @@ def set_args():
     bands_to_keep_indicator = "bands-" + ''.join(str(x) for x in band_indicator)
     model_identifier = f"efficientnet_swin_{bands_to_keep_indicator}"
 
+    checkpoint_name = "epoch=105-step=51834.ckpt"  # "epoch=105-step=51834.ckpt" , epoch=66-step=30954.ckpt
+    model_identifier = "efficientnet_swin_bands-111111111101111000000000"  # "efficientnet_swin_bands-111111111101111000000000" , res_swin_v2_S1-1111_S2-11111111110
+
+    parser = argparse.ArgumentParser()
     parser.add_argument('--model_identifier', default=model_identifier, type=str)
     # parser.add_argument('--segmenter_name', default=model_segmenter, type=str)
     parser.add_argument('--encoder_name', default="efficient_swin", type=str)
     # parser.add_argument('--encoder_weights', default=model_encoder_weights, type=str)
     parser.add_argument('--model_version', default=version, type=int)
+
+    parser.add_argument('--encoder_name', default="efficient_swin", type=str)
     parser.add_argument('--data_type', default=data_type, type=str)
+    parser.add_argument('--checkpoint_name', default=checkpoint_name, type=str)
 
     data_path = osp.dirname(data.__file__)
     # models_path = osp.dirname(models.swin.__file__)
     models_path = r"C:\Users\lvblo\PycharmProjects\forestbiomass\models\swin"
     data_path = r"C:\Users\Team Epoch A\Documents\Epoch III\forestbiomass\data"
+    models_path = osp.dirname(models.__file__)
+    # data_path = r"C:\Users\kuipe\OneDrive\Bureaublad\Epoch\forestbiomass\data"
+    # data_path = r"C:\Users\Team Epoch A\Documents\Epoch III\forestbiomass\data"
 
     parser.add_argument('--tiff_training_features_path', default=str(osp.join(data_path, "imgs", "train_features")))
     parser.add_argument('--tiff_training_labels_path', default=str(osp.join(data_path, "imgs", "train_agbm")))
@@ -340,6 +358,19 @@ def set_args():
     parser.add_argument('--training_ids_path', default=str(osp.join(data_path, "patch_names")), type=str)
     # parser.add_argument('--testing_ids_path', default=str(osp.join(data_path, "test_patch_names")), type=str)
     parser.add_argument('--testing_ids_path', default=str(osp.join(data_path, "patch_names")), type=str)
+    parser.add_argument('--training_ids_path', default=str(osp.join(data_path, "patch_names")), type=str)
+
+    if predicting_train_set:
+        parser.add_argument('--tiff_testing_features_path', default=str(osp.join(data_path, "imgs", "train_features")))
+        parser.add_argument('--testing_ids_path', default=str(osp.join(data_path, "test_patch_names")), type=str)
+        parser.add_argument('--submission_folder_path',
+                            default=str(osp.join(data_path, "imgs", "swinefficientnet_agbm")),  # swinres_agbm, swinefficientnet_agbm
+                            type=str)
+    else:
+        parser.add_argument('--tiff_testing_features_path', default=str(osp.join(data_path, "imgs", "test_features")))
+        parser.add_argument('--testing_ids_path', default=str(osp.join(data_path, "test_patch_names")), type=str)
+        parser.add_argument('--submission_folder_path', default=str(osp.join(data_path, "imgs", "test_agbm")), type=str)
+
     parser.add_argument('--current_model_path', default=str(osp.join(models_path, "tb_logs", model_identifier)),
                         type=str)
     # parser.add_argument('--submission_folder_path', default=str(osp.join(data_path, "imgs", "test_agbm")), type=str)
@@ -369,7 +400,7 @@ def set_args():
 
 if __name__ == '__main__':
     args = set_args()
-    #score = train(args)
+    score = train(args)
     # print(score)
 
-    create_submissions(args)
+    # create_submissions(args)

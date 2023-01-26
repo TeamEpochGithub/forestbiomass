@@ -152,14 +152,16 @@ class MixBlock(nn.Module):
         y_global = x_global + self.global_bn(self.global_conv(att_local))
         return y_local, y_global
 
-base_model = torchvision.models.resnet34(True)
-base_layers = list(base_model.children())
+
 class Res_Swin(nn.Module):
     def __init__(self, img_size=256, hidden_dim=64, layers=(2, 2, 18,
                                                             2), heads=(3, 6, 12, 24), channels=98, head_dim=32,
                  window_size=8, downscaling_factors=(2, 2, 2, 2), relative_pos_embedding=True):
         super(Res_Swin, self).__init__()
 
+        self.base_model = torchvision.models.resnet34(True)
+
+        self.base_layers = list(self.base_model.children())
 
         self.layer0 = nn.Sequential(
             Conv_3(channels, hidden_dim, 7, 2, 3),
@@ -176,7 +178,7 @@ class Res_Swin(nn.Module):
 
         self.layer1 = DConv_3(hidden_dim)
 
-        self.res_layer1 = nn.Sequential(*base_layers[3:5])
+        self.res_layer1 = nn.Sequential(*self.base_layers[3:5])
 
         self.mix1 = MixBlock(hidden_dim)
 
@@ -191,7 +193,7 @@ class Res_Swin(nn.Module):
 
         self.layer2 = DConv_3(hidden_dim * 2)
 
-        self.res_layer2 = base_layers[5]
+        self.res_layer2 = self.base_layers[5]
 
         self.mix2 = MixBlock(hidden_dim * 2)
 
@@ -206,7 +208,7 @@ class Res_Swin(nn.Module):
 
         self.layer3 = DConv_5(hidden_dim * 4)
 
-        self.res_layer3 = base_layers[6]
+        self.res_layer3 = self.base_layers[6]
 
         self.mix3 = MixBlock(hidden_dim * 4)
 
@@ -221,7 +223,7 @@ class Res_Swin(nn.Module):
 
         self.layer4 = DConv_2(hidden_dim * 8)
 
-        self.res_layer4 = base_layers[7]
+        self.res_layer4 = self.base_layers[7]
 
         self.mix4 = MixBlock(hidden_dim * 8)
 
