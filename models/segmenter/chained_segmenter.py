@@ -62,6 +62,10 @@ class ChainedSegmentationDatasetMaker(Dataset):
         all_bands = []
 
         for month_index, month_indicator in enumerate(self.month_selection):
+
+            if month_indicator == 0:
+                continue
+
             band_images = retrieve_tiff(self.training_feature_path, id, str(month_index), self.band_selection)
 
             all_bands.extend(band_images)
@@ -73,10 +77,10 @@ class ChainedSegmentationDatasetMaker(Dataset):
         tensor_list = []
 
         for index, current_band in enumerate(
-                np.array_split(np.asarray(transformed_images_dict['image']), len(self.month_selection))):
-            normalized_tensors = torch.tensor(current_band)
+                np.array_split(np.asarray(transformed_images_dict['image']), self.month_selection.count(1))):
+            tensor_bands = torch.tensor(current_band)
 
-            dictionary_tensor = {'image': normalized_tensors}
+            dictionary_tensor = {'image': tensor_bands}
 
             expanded_tensor = select_bands(bands_to_keep=self.band_selection)(dictionary_tensor)['image']
 
@@ -110,11 +114,17 @@ class ChainedSegmentationSubmissionDatasetMaker(Dataset):
         tensor_list = []
 
         for month_index, month_indicator in enumerate(self.month_selection):
+
+            if month_indicator == 0:
+                continue
+
             base_tensor = retrieve_tiff(self.testing_feature_path, id, str(month_index), self.band_selection)
 
-            dictionary_tensor = {'image': base_tensor}  # Dict required for usage of torch transforms
+            tensor_bands = torch.tensor(base_tensor)
 
-            expanded_tensor = select_bands(bands_to_keep=self.band_selection)(dictionary_tensor)
+            dictionary_tensor = {'image': tensor_bands}  # Dict required for usage of torch transforms
+
+            expanded_tensor = select_bands(bands_to_keep=self.band_selection)(dictionary_tensor)['image']
 
             tensor_list.append(expanded_tensor)
 
@@ -166,12 +176,13 @@ def select_bands(bands_to_keep):
 
 
 class ChainedSegmenter(pl.LightningModule):
-    def __init__(self, band_model, month_model, learning_rate, loss_function, repair_mode, band_count, month_count):
+    def __init__(self, band_model, month_model, learning_rate, training_loss_function, validation_loss_function, repair_mode, band_count, month_count):
         super().__init__()
         self.band_model = band_model
         self.month_model = month_model
         self.learning_rate = learning_rate
-        self.loss_function = loss_function
+        self.training_loss_function = training_loss_function
+        self.validation_loss_function = validation_loss_function
         self.repair_mode = repair_mode
         self.band_count = band_count
         self.month_count = month_count
@@ -196,7 +207,7 @@ class ChainedSegmenter(pl.LightningModule):
         month_tensor = torch.cat(segmented_bands_list, dim=1)
 
         y_hat = self.month_model(month_tensor)
-        loss = self.loss_function(y_hat, y)
+        loss = self.training_loss_function(y_hat, y)
         self.log("train/loss", loss)
 
         return loss
@@ -220,7 +231,7 @@ class ChainedSegmenter(pl.LightningModule):
         month_tensor = torch.cat(segmented_bands_list, dim=1)
 
         y_hat = self.month_model(month_tensor)
-        loss = self.loss_function(y_hat, y)
+        loss = self.validation_loss_function(y_hat, y)
         self.log("val/loss", loss)
 
         return loss
@@ -240,6 +251,26 @@ class ChainedSegmenter(pl.LightningModule):
                 continue
 
             result = self.band_model(normalizer(current_band).to('cuda'))
+            segmented_bands_list.append(result)
+
+        month_tensor = torch.cat(segmented_bands_list, dim=1)
+
+        y_hat = self.month_model(month_tensor)
+
+        return y_hat
+
+    def forward_cpu(self, x):
+        normalizer = nn.BatchNorm2d(self.band_count)
+
+        segmented_bands_list = []
+        for index, current_band in enumerate(torch.tensor_split(x, self.month_count, dim=1)):
+
+            if torch.sum(current_band) == 0:
+                batch_count = current_band.size(dim=0)
+                segmented_bands_list.append(torch.FloatTensor(batch_count, 1, 256, 256).fill_(0))
+                continue
+
+            result = self.band_model(normalizer(current_band))
             segmented_bands_list.append(result)
 
         month_tensor = torch.cat(segmented_bands_list, dim=1)
@@ -407,7 +438,8 @@ def train(args):
     model = ChainedSegmenter(band_model=band_segmenter_model,
                              month_model=month_segmenter_model,
                              learning_rate=args.learning_rate,
-                             loss_function=args.loss_function,
+                             training_loss_function=args.training_loss_function,
+                             validation_loss_function=args.validation_loss_function,
                              repair_mode=args.missing_month_repair_mode,
                              band_count=len(args.band_selection),
                              month_count=args.month_selection.count(1))
@@ -492,7 +524,8 @@ def load_model(args):
     model = ChainedSegmenter(band_model=band_segmenter_model,
                              month_model=month_segmenter_model,
                              learning_rate=args.learning_rate,
-                             loss_function=args.loss_function,
+                             training_loss_function=args.training_loss_function,
+                             validation_loss_function=args.validation_loss_function,
                              repair_mode=args.missing_month_repair_mode,
                              band_count=len(args.band_selection),
                              month_count=args.month_selection.count(1))
@@ -517,7 +550,12 @@ def submission_generator(args):
 
     new_dataset, chip_ids = prepare_dataset_testing(args)
 
-    trainer = Trainer(accelerator="cpu", devices=1)
+    strategy = args.multiprocessing_strategy
+
+    if strategy == "ddp":
+        strategy = DDPStrategy(process_group_backend="gloo")
+
+    trainer = Trainer(accelerator="gpu", devices=1, strategy=strategy)
 
     dl = DataLoader(new_dataset, num_workers=12)
 
@@ -557,11 +595,12 @@ def set_args():
     log_step_frequency = 50
     version = -1  # Keep -1 if loading the latest model version.
     save_top_k_checkpoints = 1
-    loss_function = loss_functions.rmse_loss
+    training_loss_function = loss_functions.rmse_loss
+    validation_loss_function = loss_functions.rmse_loss
 
     missing_month_repair_mode = "zeros"
 
-    multiprocessing_strategy = "ddp"  # replace with ddp if using more than 1 device
+    multiprocessing_strategy = None  # replace with ddp if using more than 1 device
     device_count = 2
 
     warm_start = True
@@ -689,7 +728,8 @@ def set_args():
 
     parser.add_argument('--band_selection', default=band_selection, type=list)
     parser.add_argument('--month_selection', default=month_list, type=list)
-    parser.add_argument('--loss_function', default=loss_function)
+    parser.add_argument('--training_loss_function', default=training_loss_function)
+    parser.add_argument('--validation_loss_function', default=validation_loss_function)
 
     parser.add_argument('--missing_month_repair_mode', default=missing_month_repair_mode, type=str)
 
@@ -712,5 +752,5 @@ def set_args():
 
 if __name__ == '__main__':
     args = set_args()
-    train(args)
+    #train(args)
     submission_generator(args)
