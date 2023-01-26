@@ -326,7 +326,7 @@ def set_args():
     bands_to_keep_indicator = "bands-" + ''.join(str(x) for x in band_indicator)
     # model_identifier = f"efficientnet_swin_{bands_to_keep_indicator}"
 
-    checkpoint_name = "epoch=105-step=51834.ckpt"  # "epoch=105-step=51834.ckpt" , epoch=66-step=30954.ckpt
+    checkpoint_name = "epoch=105-step=51834_swin_efficeint.ckpt"  # "epoch=105-step=51834_swin_efficeint.ckpt" , epoch=66-step=30954.ckpt
     model_identifier = "efficientnet_swin_bands-111111111101111000000000"  # "efficientnet_swin_bands-111111111101111000000000" , res_swin_v2_S1-1111_S2-11111111110
 
     parser = argparse.ArgumentParser()

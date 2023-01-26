@@ -233,7 +233,7 @@ def load_model(args):
                            learning_rate=args.learning_rate, weight_decay=args.weight_decay,
                            loss_function=args.train_loss_function, val_loss=args.val_loss_function)
     print("hello")
-    checkpoint = torch.load(str(latest_checkpoint_path))
+    checkpoint = torch.load(str(latest_checkpoint_path), map_location=torch.device('cpu'))
     # print(checkpoint["state_dict"])
     print(str(latest_checkpoint_path))
     model.load_state_dict(checkpoint["state_dict"])
@@ -247,7 +247,7 @@ def create_submissions(args):
 
     new_dataset, chip_ids = prepare_dataset_testing(args)
 
-    trainer = Trainer(accelerator="gpu", devices=[1])
+    trainer = Trainer(accelerator="cpu", devices=1)
 
     dl = DataLoader(new_dataset, num_workers=args.dataloader_workers)
 
@@ -275,7 +275,7 @@ def set_args():
     warmup_epochs = 20
     learning_rate = 3e-4
     weight_decay = 5e-5
-    dataloader_workers = 44
+    dataloader_workers = 2
     validation_fraction = 0.1
     batch_size = 16
     log_step_frequency = 200
@@ -327,7 +327,7 @@ def set_args():
     bands_to_keep_indicator = "bands-" + ''.join(str(x) for x in band_indicator)
     # model_identifier = f"efficientnet_swin_{bands_to_keep_indicator}"
 
-    checkpoint_name = "epoch=105-step=51834.ckpt"  # "epoch=105-step=51834.ckpt" , epoch=66-step=30954.ckpt
+    checkpoint_name = "epoch=4-step=1225_huber.ckpt"  # "epoch=105-step=51834_swin_efficeint.ckpt" , epoch=66-step=30954.ckpt
     model_identifier = "efficientnet_swin_bands-111111111101111000000000"  # "efficientnet_swin_bands-111111111101111000000000" , res_swin_v2_S1-1111_S2-11111111110
 
     parser = argparse.ArgumentParser()
@@ -385,7 +385,7 @@ def set_args():
 
 if __name__ == '__main__':
     args = set_args()
-    score = train(args)
+    # score = train(args)
     # print(score)
 
-    # create_submissions(args)
+    create_submissions(args)

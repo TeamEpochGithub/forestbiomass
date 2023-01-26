@@ -239,7 +239,7 @@ def load_model(args):
     latest_checkpoint_name = list(os.scandir(checkpoint_dir_path))[0]
     latest_checkpoint_path = osp.join(checkpoint_dir_path, latest_checkpoint_name)
 
-    efficient_ckpt_path = osp.join(osp.dirname(mtb.__file__), "epoch=105-step=51834.ckpt")
+    efficient_ckpt_path = osp.join(osp.dirname(mtb.__file__), "epoch=105-step=51834_swin_efficeint.ckpt")
     res_ckpt_path = osp.join(osp.dirname(mtb.__file__), "epoch=66-step=30954.ckpt")
     # base_model = select_segmenter(args.encoder_weights, args.segmenter_name, args.encoder_name, len(args.bands_to_keep))
     base_model = Ensemble_Model(efficient_ckpt_path, res_ckpt_path, args)
