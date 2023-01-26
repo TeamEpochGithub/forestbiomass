@@ -196,7 +196,7 @@ def load_model(args):
     version_dir = list(os.scandir(log_folder_path))[args.model_version]
 
     checkpoint_dir_path = osp.join(log_folder_path, version_dir, "checkpoints")
-    latest_checkpoint_name = list(os.scandir(checkpoint_dir_path))[0]
+    latest_checkpoint_name = list(os.scandir(checkpoint_dir_path))[2]
     latest_checkpoint_path = osp.join(checkpoint_dir_path, latest_checkpoint_name)
 
     base_model = Efficient_Swin()
@@ -223,6 +223,11 @@ def load_model(args):
     checkpoint = torch.load(str(latest_checkpoint_path))
     # print(checkpoint["state_dict"])
     print(str(latest_checkpoint_path))
+    check_tmp = checkpoint["state_dict"]
+    for key in list(check_tmp.keys()):
+        if "model." in key:
+            check_tmp[key[6:]] = check_tmp[key]
+            del check_tmp[key]
     model.load_state_dict(checkpoint["state_dict"])
 
     print("Model loaded")
@@ -241,7 +246,7 @@ def create_submissions(args):
 
     predictions = trainer.predict(model, dataloaders=dl)
 
-    transformed_predictions = [x.cpu().squeeze().detach().numpy() for x in predictions]
+    transformed_predictions = [np.clip(x.cpu().squeeze().detach().numpy(), a_min=0, a_max=500) for x in predictions]
     linked_tensor_list = list(zip(chip_ids, transformed_predictions))
     linked_tensor_list = sorted(linked_tensor_list, key=operator.itemgetter(0))
 
@@ -323,18 +328,22 @@ def set_args():
     parser.add_argument('--data_type', default=data_type, type=str)
 
     data_path = osp.dirname(data.__file__)
-    models_path = osp.dirname(models.__file__)
+    # models_path = osp.dirname(models.swin.__file__)
+    models_path = r"C:\Users\lvblo\PycharmProjects\forestbiomass\models\swin"
     data_path = r"C:\Users\Team Epoch A\Documents\Epoch III\forestbiomass\data"
 
     parser.add_argument('--tiff_training_features_path', default=str(osp.join(data_path, "imgs", "train_features")))
     parser.add_argument('--tiff_training_labels_path', default=str(osp.join(data_path, "imgs", "train_agbm")))
-    parser.add_argument('--tiff_testing_features_path', default=str(osp.join(data_path, "imgs", "test_features")))
+    # parser.add_argument('--tiff_testing_features_path', default=str(osp.join(data_path, "imgs", "test_features")))
+    parser.add_argument('--tiff_testing_features_path', default=str(osp.join(data_path, "imgs", "train_features")))
 
     parser.add_argument('--training_ids_path', default=str(osp.join(data_path, "patch_names")), type=str)
-    parser.add_argument('--testing_ids_path', default=str(osp.join(data_path, "test_patch_names")), type=str)
+    # parser.add_argument('--testing_ids_path', default=str(osp.join(data_path, "test_patch_names")), type=str)
+    parser.add_argument('--testing_ids_path', default=str(osp.join(data_path, "patch_names")), type=str)
     parser.add_argument('--current_model_path', default=str(osp.join(models_path, "tb_logs", model_identifier)),
                         type=str)
-    parser.add_argument('--submission_folder_path', default=str(osp.join(data_path, "imgs", "test_agbm")), type=str)
+    # parser.add_argument('--submission_folder_path', default=str(osp.join(data_path, "imgs", "test_agbm")), type=str)
+    parser.add_argument('--submission_folder_path', default=str(osp.join(data_path, "imgs", "train_agbm_22")), type=str)
 
     parser.add_argument('--dataloader_workers', default=dataloader_workers, type=int)
     parser.add_argument('--batch_size', default=batch_size, type=int)
@@ -360,7 +369,7 @@ def set_args():
 
 if __name__ == '__main__':
     args = set_args()
-    score = train(args)
+    #score = train(args)
     # print(score)
 
-    # create_submissions(args)
+    create_submissions(args)
