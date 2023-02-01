@@ -30,7 +30,7 @@ from models.utils.simple_tensor_accumulate import accumulate_predictions
 warnings.filterwarnings("ignore", category=rasterio.errors.NotGeoreferencedWarning)
 
 
-class Sentinel2Model(pl.LightningModule):
+class Segmenter(pl.LightningModule):
     def __init__(self, model, args):
         super().__init__()
         self.model = model
@@ -160,7 +160,7 @@ def train(args):
 
     base_model = select_segmenter(args.encoder_weights, args.segmenter_name, args.encoder_name, len(args.bands_to_keep))
 
-    model = Sentinel2Model(base_model, args)
+    model = Segmenter(base_model, args)
 
     logger = TensorBoardLogger("tb_logs", name=args.model_identifier)
 
@@ -170,7 +170,13 @@ def train(args):
         mode="min",
     )
 
-    # ddp = DDPStrategy(process_group_backend="gloo")
+    ddp = DDPStrategy(process_group_backend="gloo")
+
+    if args.multiprocessing_strategy == "ddp":
+        strategy = ddp
+    elif args.multiprocessing is None:
+        strategy = None
+
     trainer = Trainer(
         max_epochs=args.epochs,
         logger=[logger],
@@ -178,9 +184,9 @@ def train(args):
         callbacks=[checkpoint_callback],
         num_sanity_val_steps=0,
         accelerator='gpu',
-        devices=4,
+        devices=args.device_count,
         # num_nodes=4,
-        strategy='dp'
+        strategy=strategy
     )
 
     trainer.fit(model, train_dataloaders=train_dataloader, val_dataloaders=valid_dataloader)
@@ -203,24 +209,7 @@ def load_model(args):
     base_model = select_segmenter(args.encoder_weights, args.segmenter_name, args.encoder_name,
                                   len(args.bands_to_keep) + args.extra_channels)
 
-    # This block might be redundant if we can download weights via the python segmentation models library.
-    # However, it might be that not all weights are available this way.
-    # If you have downloaded weights (in the .pt format), put them in the pre-trained-weights folder
-    # and give the file the same name as the encoder you're using.
-    # If you do that, this block will try and load them for your corrupted_model.
-    pre_trained_weights_dir_path = osp.join(osp.dirname(data.__file__), "pre-trained_weights")
-
-    if osp.exists(osp.join(pre_trained_weights_dir_path, f"{args.encoder_name}.pt")):
-        pre_trained_weights_path = osp.join(pre_trained_weights_dir_path, f"{args.encoder_name}.pt")
-    else:
-        pre_trained_weights_path = None
-
-    if pre_trained_weights_path is not None:
-        base_model.encoder.load_state_dict(torch.load(pre_trained_weights_path))
-
-    ###########################################################
-
-    model = Sentinel2Model(base_model, args)
+    model = Segmenter(model=base_model, args=args)
 
     checkpoint = torch.load(str(latest_checkpoint_path))
     model.load_state_dict(checkpoint["state_dict"])
@@ -261,21 +250,25 @@ def create_submissions(args):
 
 
 def set_args():
+
     model_segmenter = "Unet"
     model_encoder = "efficientnet-b2"
     model_encoder_weights = "imagenet"  # Leave None if not using weights.
     data_type = "tiff"  # options are "npy" or "tiff"
-    epochs = 40
+    epochs = 20
     learning_rate = 1e-4
-    dataloader_workers = 32
+    dataloader_workers = 12
     validation_fraction = 0.2
-    batch_size = 32
+    batch_size = 8
     log_step_frequency = 200
     version = -1  # Keep -1 if loading the latest corrupted_model version.
     save_top_k_checkpoints = 3
     transform_method = "replace_corrupted_0s"  # "replace_corrupted_noise"  # nothing  # add_band_corrupted_arrays
     train_loss_function = loss_functions.rmse_loss
     val_loss_function = loss_functions.rmse_loss
+
+    multiprocessing_strategy = None  #replace with ddp if using more that 1 device
+    device_count = 1
 
     # WARNING: Only increment extra_channels when making predictions/submission (based on the transform method used)
     # it is automatically incremented during training based on the transform method used (extra channels generated)
@@ -352,6 +345,9 @@ def set_args():
     parser.add_argument('--transform_method', default=transform_method, type=str)
     parser.add_argument('--extra_channels', default=extra_channels, type=int)
 
+    parser.add_argument('--multiprocessing_strategy', default=multiprocessing_strategy, type=str)
+    parser.add_argument('--device_count', default=device_count, type=int)
+
     args = parser.parse_args()
 
     return args
@@ -360,6 +356,4 @@ def set_args():
 if __name__ == '__main__':
     args = set_args()
     _, score = train(args)
-    # print(score)
-
-    # create_submissions(args)
+    create_submissions(args)

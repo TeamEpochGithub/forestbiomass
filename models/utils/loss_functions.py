@@ -9,6 +9,11 @@ def mse_loss(prediction, target):
 def rmse_loss(prediction, target):
     return torch.sqrt(F.mse_loss(prediction, target))
 
+def huber_loss(y_true, y_pred, delta=60.0):
+    error = y_true - y_pred
+    abs_error = torch.abs(error)
+    quadratic = torch.where(abs_error < delta, 0.5 * error ** 2, delta * (abs_error - 0.5 * delta))
+    return torch.mean(quadratic)
 
 def huber_loss(y_true, y_pred, delta=40.0):
     error = y_true - y_pred

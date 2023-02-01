@@ -81,6 +81,38 @@ def evaluate_encoder_model_and_weights(iterations, epochs):
                                     iterations=iterations,
                                     epochs=epochs)
 
+
+def evaluate_model_architectures(iterations, epochs):
+    parameters = [{"band_segmenter_name": "Unet", "month_segmenter_name": "Unet"},
+                  {"band_segmenter_name": "Unet++", "month_segmenter_name": "Unet++"},
+                  {"band_segmenter_name": "MAnet", "month_segmenter_name": "MAnet"},
+                  {"band_segmenter_name": "Linknet", "month_segmenter_name": "Linknet"},
+                  {"band_segmenter_name": "FPN", "month_segmenter_name": "FPN"},
+                  {"band_segmenter_name": "PSPNet", "month_segmenter_name": "PSPNet"},
+                  {"band_segmenter_name": "PAN", "month_segmenter_name": "PAN"},
+                  {"band_segmenter_name": "DeepLabV3", "month_segmenter_name": "DeepLabV3"},
+                  {"band_segmenter_name": "DeepLabV3+", "month_segmenter_name": "DeepLabV3+"},
+                  ]
+
+    evaluate_segmentation_parameter(parameters=parameters,
+                                    iterations=iterations,
+                                    epochs=epochs)
+
+
+def evaluate_band_selection(iterations, epochs):
+    parameters = [
+        {"band_selection": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 11, 12, 13, 14]},
+        {"band_selection": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 11, 12, 13, 14, 18, 19, 20, 21, 22, 23]},
+        {"band_selection": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 11, 12, 13, 14, 15, 16, 17, 21, 22, 23]},
+        {"band_selection": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]},
+        {"band_selection": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23]},
+        ]
+
+    evaluate_segmentation_parameter(parameters=parameters,
+                                    iterations=iterations,
+                                    epochs=epochs)
+
+
 if __name__ == '__main__':
     iterations = 3
     epochs = 20
