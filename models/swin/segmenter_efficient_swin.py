@@ -194,9 +194,9 @@ def train(args):
 
 
 def load_model(args):
-    print("Getting saved corrupted_model...")
+    print("Getting saved model...")
 
-    assert osp.exists(args.current_model_path) is True, "requested corrupted_model does not exist"
+    assert osp.exists(args.current_model_path) is True, "requested model does not exist"
     log_folder_path = args.current_model_path
 
     version_dir = list(os.scandir(log_folder_path))[args.model_version]
@@ -243,7 +243,7 @@ def create_submissions(args):
 
     new_dataset, chip_ids = prepare_dataset_testing(args)
 
-    trainer = Trainer(accelerator="gpu", devices=[1])
+    trainer = Trainer(accelerator="gpu", devices=[0])
 
     dl = DataLoader(new_dataset, num_workers=args.dataloader_workers)
 
@@ -275,7 +275,7 @@ def set_args():
     validation_fraction = 0.1
     batch_size = 16
     log_step_frequency = 200
-    version = -1  # Keep -1 if loading the latest corrupted_model version.
+    version = -1  # Keep -1 if loading the latest model version.
     save_top_k_checkpoints = 3
     transform_method = "replace_corrupted_0s"  # "replace_corrupted_noise"  # nothing  # add_band_corrupted_arrays
     train_loss_function = loss_functions.rmse_loss

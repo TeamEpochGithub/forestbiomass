@@ -255,7 +255,7 @@ class Segmenter(pl.LightningModule):
                                                 after_scheduler=scheduler_cosine)
         return [optimizer], [scheduler_cosine]
 
-        # return [optimizer]
+        # return [corrupted_optimizer]
 
     def forward(self, x):
         return self.model(x)
@@ -365,7 +365,7 @@ def train(args):
 
     model = Segmenter(model=base_model, epochs=args.epochs, warmup_epochs=args.warmup_epochs,
                       learning_rate=args.learning_rate, weight_decay=args.weight_decay,
-                      loss_function=args.loss_function)
+                      loss_function=args.val_loss_function)
 
     logger = TensorBoardLogger("tb_logs", name=args.model_identifier)
 
@@ -425,7 +425,7 @@ def load_model(args):
 
     model = Segmenter(model=base_model, epochs=args.epochs, warmup_epochs=args.warmup_epochs,
                       learning_rate=args.learning_rate, weight_decay=args.weight_decay,
-                      loss_function=args.loss_function)
+                      loss_function=args.val_loss_function)
 
     checkpoint = torch.load(str(latest_checkpoint_path))
     model.load_state_dict(checkpoint["state_dict"])

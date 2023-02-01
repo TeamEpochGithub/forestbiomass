@@ -44,7 +44,8 @@ def extract_metadata_band(band, missing):
     if missing:
         return 0
     else:
-        return torch.mean(create_mask(band, radius=2))
+        # return torch.mean(create_mask(band, radius=2))
+        return torch.mean(band)
 
 
 def get_features_batch(patch_names):
@@ -90,7 +91,7 @@ def save_batch_to_csv(batch_patch_names):
     corruptedness_values = extract_metadata_batch(batch_patch_names).tolist()
     patch_corrupted = zip(batch_patch_names, corruptedness_values)
 
-    csv_path = (osp.join(osp.dirname(data.__file__), "train_corruptedness_values.csv"))
+    csv_path = (osp.join(osp.dirname(data.__file__), "train_intensity_values.csv"))
     with open(csv_path, "a", newline="") as f:
         writer = csv.writer(f)
         writer.writerows(patch_corrupted)
@@ -101,15 +102,15 @@ def save_test_batch_to_csv(batch_patch_names):
     corruptedness_values = extract_metadata_batch(batch_patch_names).tolist()
     patch_corrupted = zip(batch_patch_names, corruptedness_values)
 
-    csv_path = (osp.join(osp.dirname(data.__file__), "test_corruptedness_values.csv"))
+    csv_path = (osp.join(osp.dirname(data.__file__), "test_intensity_values.csv"))
     with open(csv_path, "a", newline="") as f:
         writer = csv.writer(f)
         writer.writerows(patch_corrupted)
 
 
 if __name__ == '__main__':
-    batch_size = 8
+    batch_size = 16
     patch_names_div = [patch_names[x:x + batch_size] for x in range(0, len(patch_names), batch_size)]
 
-    with Pool(os.cpu_count() - 1) as p:
-        p.map(save_test_batch_to_csv, patch_names_div)  # save_batch_to_csv
+    with Pool(16) as p:
+        p.map(save_test_batch_to_csv, patch_names_div)  # save_batch_to_csv , save_test_batch_to_csv

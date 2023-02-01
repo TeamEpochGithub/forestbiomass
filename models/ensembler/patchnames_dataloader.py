@@ -35,7 +35,7 @@ class PatchNameDatasetTrain(Dataset):
         # label_tensor = torch.tensor(rasterio.open(label_path).read().astype(np.float32))
         label_tensor = torch.tensor(self.agbms_dict[patch])
 
-        return patch, label_tensor  # 1, (256, 256)
+        return patch  ## label_tensor  # 1, (256, 256)
 
 
 class PatchNameDatasetTest(Dataset):

@@ -10,8 +10,8 @@ def create_and_normalize_bands_tensor(band_list):
     band_tensor = torch.tensor(band_array)
 
     # normalization happens here
-    band_tensor = (band_tensor.permute(1, 2, 0) - band_tensor.mean(dim=(1, 2))) / (band_tensor.std(dim=(1, 2)) + 0.01)
-    band_tensor = band_tensor.permute(2, 0, 1)
+    # band_tensor = (band_tensor.permute(1, 2, 0) - band_tensor.mean(dim=(1, 2))) / (band_tensor.std(dim=(1, 2)) + 0.0001)
+    # band_tensor = band_tensor.permute(2, 0, 1)
 
     return band_tensor
 

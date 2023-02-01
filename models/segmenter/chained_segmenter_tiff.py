@@ -285,7 +285,7 @@ def train(args):
     model = ChainedSegmenter(band_model=band_segmenter_model,
                              month_model=month_segmenter_model,
                              learning_rate=args.learning_rate,
-                             loss_function=args.loss_function,
+                             loss_function=args.val_loss_function,
                              repair_mode=args.missing_month_repair_mode)
 
     logger = TensorBoardLogger("tb_logs", name=args.model_identifier)
@@ -341,7 +341,7 @@ def load_model(args):
     model = ChainedSegmenter(band_model=band_segmenter_model,
                              month_model=month_segmenter_model,
                              learning_rate=args.learning_rate,
-                             loss_function=args.loss_function,
+                             loss_function=args.val_loss_function,
                              repair_mode=args.missing_month_repair_mode)
 
     checkpoint = torch.load(str(latest_checkpoint_path))
