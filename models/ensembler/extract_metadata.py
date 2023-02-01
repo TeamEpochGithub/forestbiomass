@@ -20,13 +20,12 @@ from multiprocessing import Pool
 from data import imgs
 from models.ensembler.utils import get_bands_else_zeros, create_and_normalize_bands_tensor
 
-path_patch_names = osp.join(osp.dirname(data.__file__), "patch_names")
+path_patch_names = osp.join(osp.dirname(data.__file__), "test_patch_names")  # patch_names
 
 with open(path_patch_names, newline='') as f:
     reader = csv.reader(f)
     patch_name_data = list(reader)
 patch_names = patch_name_data[0]
-
 
 def create_mask(image_tensor, radius):
     assert image_tensor.shape == (256, 256), "Input image must be of shape (256, 256)"
@@ -45,13 +44,14 @@ def extract_metadata_band(band, missing):
     if missing:
         return 0
     else:
-        return torch.mean(create_mask(band, radius=2))
+        # return torch.mean(create_mask(band, radius=2))
+        return torch.mean(band)
 
 
 def get_features_batch(patch_names):
     patch_bands = []
     for patch_name in patch_names:
-        path_train_features = osp.join(osp.dirname(imgs.__file__), "train_features")
+        path_train_features = osp.join(osp.dirname(imgs.__file__), "test_features")
 
         bands = []
         for month in range(12):
@@ -91,15 +91,26 @@ def save_batch_to_csv(batch_patch_names):
     corruptedness_values = extract_metadata_batch(batch_patch_names).tolist()
     patch_corrupted = zip(batch_patch_names, corruptedness_values)
 
-    csv_path = (osp.join(osp.dirname(data.__file__), "corruptedness_values.csv"))
+    csv_path = (osp.join(osp.dirname(data.__file__), "train_intensity_values.csv"))
+    with open(csv_path, "a", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerows(patch_corrupted)
+
+
+def save_test_batch_to_csv(batch_patch_names):
+    print(patch_names.index(batch_patch_names[0]))
+    corruptedness_values = extract_metadata_batch(batch_patch_names).tolist()
+    patch_corrupted = zip(batch_patch_names, corruptedness_values)
+
+    csv_path = (osp.join(osp.dirname(data.__file__), "test_intensity_values.csv"))
     with open(csv_path, "a", newline="") as f:
         writer = csv.writer(f)
         writer.writerows(patch_corrupted)
 
 
 if __name__ == '__main__':
-    batch_size = 8
+    batch_size = 16
     patch_names_div = [patch_names[x:x + batch_size] for x in range(0, len(patch_names), batch_size)]
 
-    with Pool(os.cpu_count() - 1) as p:
-        p.map(save_batch_to_csv, patch_names_div)
+    with Pool(16) as p:
+        p.map(save_test_batch_to_csv, patch_names_div)  # save_batch_to_csv , save_test_batch_to_csv

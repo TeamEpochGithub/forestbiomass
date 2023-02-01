@@ -248,12 +248,11 @@ def load_model(args):
 
 
 def create_submissions(args):
-
     model = load_model(args)
 
     new_dataset, chip_ids = prepare_dataset_testing(args)
 
-    trainer = Trainer(accelerator="cpu", devices=1)
+    trainer = Trainer(accelerator="gpu", devices=[1])
 
     dl = DataLoader(new_dataset, num_workers=args.dataloader_workers)
 
@@ -277,11 +276,11 @@ def create_submissions(args):
 
 def set_args():
     data_type = "tiff"  # options are "npy" or "tiff"
-    epochs = 1000
+    epochs = 2500
     warmup_epochs = 20
     learning_rate = 3e-4
     weight_decay = 5e-5
-    dataloader_workers = 2
+    dataloader_workers = 22
     validation_fraction = 0.1
     batch_size = 16
     log_step_frequency = 200
@@ -332,7 +331,7 @@ def set_args():
     bands_to_keep_indicator = "bands-" + ''.join(str(x) for x in band_indicator)
     # model_identifier = f"efficientnet_swin_{bands_to_keep_indicator}"
 
-    checkpoint_name = "epoch=4-step=1225_huber.ckpt"  # "epoch=105-step=51834_swin_efficeint.ckpt" , epoch=66-step=30954.ckpt
+    checkpoint_name = "epoch=105-step=51834.ckpt"  # "epoch=105-step=51834.ckpt" , epoch=66-step=30954.ckpt
     model_identifier = "efficientnet_swin_bands-111111111101111000000000"  # "efficientnet_swin_bands-111111111101111000000000" , res_swin_v2_S1-1111_S2-11111111110
 
     parser = argparse.ArgumentParser()

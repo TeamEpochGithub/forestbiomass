@@ -1,20 +1,58 @@
 import json
 
-# csv_path = r"corruptedness_values.csv"
-#
-# dicts = dict()
-# with open(csv_path, "r") as f:
-#     data = f.readlines()
-#     print(data[0])
-#     for item in data:
-#         key = item[:8]
-#         item = item[11:-3]
-#         item_list = item.strip().split(",")
-#         dicts[key] = list(map(lambda x:float(x), item_list))
-#
-# b = json.dumps(dicts)
-# f2 = open("convert_corruptedness.json", "w")
-# f2.write(b)
-# f2.close()
+import numpy as np
 
-print(len([1.0, 1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.9999847412109375, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0, 0.999969482421875, 0.9999847412109375, 0.9999542236328125, 1.0, 0.9999847412109375, 0.999969482421875, 0.9999847412109375, 0.9999542236328125, 0.99981689453125, 0.9997406005859375, 0.998016357421875, 1.0, 1.0, 1.0, 1.0, 0.9999847412109375, 0.999969482421875, 0.999969482421875, 0.9999847412109375, 0.9999542236328125, 0.9999542236328125, 0.999969482421875, 0.9998931884765625, 0.999481201171875, 0.99957275390625, 0.997802734375, 1.0, 1.0, 1.0, 1.0, 0.98663330078125, 0.9998931884765625, 0.99993896484375, 0.9999237060546875, 0.999908447265625, 0.999908447265625, 0.9998779296875, 0.9999237060546875, 0.9994964599609375, 0.9996185302734375, 0.998291015625, 1.0, 1.0, 1.0, 1.0, 0.999664306640625, 0.9996337890625, 0.9996185302734375, 0.99957275390625, 0.999786376953125, 0.999755859375, 0.9998016357421875, 0.99981689453125, 0.9998016357421875, 0.999664306640625, 0.9165496826171875, 1.0, 1.0, 1.0, 1.0, 0.9997406005859375, 0.999786376953125, 0.9997711181640625, 0.9996795654296875, 0.9998321533203125, 0.999908447265625, 0.999725341796875, 0.921966552734375, 0.99957275390625, 0.999755859375, 0.9195404052734375, 1.0, 1.0, 1.0, 1.0, 0.9996185302734375, 0.9996795654296875, 0.9997100830078125, 0.9999542236328125, 0.999969482421875, 0.999969482421875, 0.99993896484375, 0.9998779296875, 0.999786376953125, 0.9998321533203125, 0.9960174560546875]))
+
+def convert_values_to_json():
+    # csv_path = r"test_corruptedness_values.csv"
+    csv_path = r"test_intensity_values.csv"
+
+    dicts = dict()
+    with open(csv_path, "r") as f:
+        data = f.readlines()
+        for item in data:
+            key = item[:8]
+            print(key)
+            item = item[11:-3]
+            item_list = item.strip().split(",")
+            dicts[key] = list(map(lambda x: float(x), item_list))
+
+    print("normalizing...")
+    b = json.dumps(normalize_dict(dicts))
+    # f2 = open("test_corruptedness_values.json", "w")
+    f2 = open("test_intensity_values.json", "w")
+    f2.write(b)
+    f2.close()
+
+
+def normalize_dict(d):
+    normalized_dict = {}
+
+    means = []
+    stds = []
+    for key, values in d.items():
+        for i in range(len(values)):
+            column_mean = np.mean([d[k][i] if d[k][i] != -9999.0 else 0 for k in d.keys()])
+            column_std = np.std([d[k][i] if d[k][i] != -9999.0 else 0 for k in d.keys()])
+            means.append(column_mean)
+            stds.append(column_std)
+        break
+
+    for key, values in d.items():
+        print(key)
+        normalized_values = []
+        for i in range(len(values)):
+            # column_mean = np.mean([d[k][i] if d[k][i] != -9999.0 else 0 for k in d.keys()])
+            # column_std = np.std([d[k][i] if d[k][i] != -9999.0 else 0 for k in d.keys()])
+            column_mean = means[i]
+            column_std = stds[i]
+
+            if column_std == 0:
+                column_std = 1
+            normalized_values.append((values[i] - column_mean) / column_std)
+        normalized_dict[key] = normalized_values
+    return normalized_dict
+
+
+if __name__ == '__main__':
+    convert_values_to_json()

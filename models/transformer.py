@@ -99,7 +99,7 @@ def create_vit_model(input_shape, x_train, patch_size, num_patches, projection_d
     # Classify outputs.
     unshaped = layers.Dense(256 * 256)(features)  # layers.Dense(num_classes)(features)
     logits = layers.Reshape((256, 256))(unshaped)
-    # Create the Keras model.
+    # Create the Keras corrupted_model.
     model = keras.Model(inputs=inputs, outputs=logits)
 
     optimizer = tfa.optimizers.AdamW(

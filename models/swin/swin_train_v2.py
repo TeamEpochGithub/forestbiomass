@@ -255,7 +255,7 @@ class Segmenter(pl.LightningModule):
                                                 after_scheduler=scheduler_cosine)
         return [optimizer], [scheduler_cosine]
 
-        # return [optimizer]
+        # return [corrupted_optimizer]
 
     def forward(self, x):
         return self.model(x)
@@ -365,7 +365,7 @@ def train(args):
 
     model = Segmenter(model=base_model, epochs=args.epochs, warmup_epochs=args.warmup_epochs,
                       learning_rate=args.learning_rate, weight_decay=args.weight_decay,
-                      loss_function=args.loss_function)
+                      loss_function=args.val_loss_function)
 
     logger = TensorBoardLogger("tb_logs", name=args.model_identifier)
 
@@ -390,9 +390,9 @@ def train(args):
 
 
 def load_model(args):
-    print("Getting saved model...")
+    print("Getting saved corrupted_model...")
 
-    assert osp.exists(args.current_model_path) is True, "requested model does not exist"
+    assert osp.exists(args.current_model_path) is True, "requested corrupted_model does not exist"
 
     log_folder_path = args.current_model_path
 
@@ -410,7 +410,7 @@ def load_model(args):
     # However, it might be that not all weights are available this way.
     # If you have downloaded weights (in the .pt format), put them in the pre-trained-weights folder
     # and give the file the same name as the encoder you're using.
-    # If you do that, this block will try and load them for your model.
+    # If you do that, this block will try and load them for your corrupted_model.
     pre_trained_weights_dir_path = osp.join(osp.dirname(data.__file__), "pre-trained_weights")
 
     if osp.exists(osp.join(pre_trained_weights_dir_path, f"{args.encoder_name}.pt")):
@@ -425,7 +425,7 @@ def load_model(args):
 
     model = Segmenter(model=base_model, epochs=args.epochs, warmup_epochs=args.warmup_epochs,
                       learning_rate=args.learning_rate, weight_decay=args.weight_decay,
-                      loss_function=args.loss_function)
+                      loss_function=args.val_loss_function)
 
     checkpoint = torch.load(str(latest_checkpoint_path))
     model.load_state_dict(checkpoint["state_dict"])
@@ -660,7 +660,7 @@ def set_args():
     validation_fraction = 0.05
     batch_size = 16
     log_step_frequency = 25
-    version = -1  # Keep -1 if loading the latest model version.
+    version = -1  # Keep -1 if loading the latest corrupted_model version.
     save_top_k_checkpoints = 3
     loss_function = loss_functions.rmse_loss
 

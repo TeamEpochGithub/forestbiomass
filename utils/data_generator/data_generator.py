@@ -61,7 +61,7 @@ class DataGenerator():
     def __init__(self, batch_size=2):
         """
         Few things to mention:
-            - The data generator tells our model how to fetch one batch of training data (in this case from files)
+            - The data generator tells our corrupted_model how to fetch one batch of training data (in this case from files)
             - Any work that can be done before training, should be done in init, since we want fetching a batch to be fast
             - Therefore, we want all filenames and labels to be determined before training
             - This saves work, because we will be fetching batches multiple times (across epochs)
