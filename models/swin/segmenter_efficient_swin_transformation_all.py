@@ -196,9 +196,9 @@ def train(args):
 
 
 def load_model(args):
-    print("Getting saved model...")
+    print("Getting saved corrupted_model...")
 
-    assert osp.exists(args.current_model_path) is True, "requested model does not exist"
+    assert osp.exists(args.current_model_path) is True, "requested corrupted_model does not exist"
     log_folder_path = args.current_model_path
 
     version_dir = list(os.scandir(log_folder_path))[args.model_version]
@@ -213,7 +213,7 @@ def load_model(args):
     # However, it might be that not all weights are available this way.
     # If you have downloaded weights (in the .pt format), put them in the pre-trained-weights folder
     # and give the file the same name as the encoder you're using.
-    # If you do that, this block will try and load them for your model.
+    # If you do that, this block will try and load them for your corrupted_model.
     pre_trained_weights_dir_path = osp.join(osp.dirname(data.__file__), "pre-trained_weights")
 
     if osp.exists(osp.join(pre_trained_weights_dir_path, f"{args.encoder_name}.pt")):
@@ -275,7 +275,7 @@ def set_args():
     validation_fraction = 0.1
     batch_size = 16
     log_step_frequency = 200
-    version = -1  # Keep -1 if loading the latest model version.
+    version = -1  # Keep -1 if loading the latest corrupted_model version.
     save_top_k_checkpoints = 3
     transform_method = "replace_corrupted_0s"  # "replace_corrupted_noise"  # nothing  # add_band_corrupted_arrays
     train_loss_function = loss_functions.rmse_loss

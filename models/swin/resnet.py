@@ -21,13 +21,13 @@ def resnet(deep_layers: int,
     :return: Model
     """
 
-    # Load the pretrained model
+    # Load the pretrained corrupted_model
     loaded_resnet, preprocess_input = Classifiers.get(f'resnet{deep_layers}')
 
-    # Get the Resnet model, provide input shape of our data and specify on what problem it should be pretrained
+    # Get the Resnet corrupted_model, provide input shape of our data and specify on what problem it should be pretrained
     base_model = loaded_resnet(input_shape=input_shape, weights=weights, include_top=False)
 
-    # Construct our output layers at the end of the pretrained model
+    # Construct our output layers at the end of the pretrained corrupted_model
     x = tf.keras.layers.GlobalAveragePooling2D()(base_model.output)
 
     # And specify multiplication with the previous layer instantly
@@ -37,15 +37,15 @@ def resnet(deep_layers: int,
     # We will use a linear layer (which basically does nothing)
     output = tf.keras.layers.Dense(256 * 256, activation='linear')(flatten)
 
-    # Construct the model from the pretrained (34) deep layers, and the specified output layers
+    # Construct the corrupted_model from the pretrained (34) deep layers, and the specified output layers
     model = tf.keras.models.Model(inputs=[base_model.input], outputs=[output])
 
-    # Compile the model
+    # Compile the corrupted_model
     # We will use Stochastic Gradient Descent and MAE as loss, since this was the competition  evaluation metric
     model.compile(optimizer="adam", loss=tf.keras.losses.MeanSquaredError(),
                   metrics=[tf.keras.metrics.MeanSquaredError()])
 
-    # You could print the model summary, but it will be very long ;)
+    # You could print the corrupted_model summary, but it will be very long ;)
     model.summary()
 
     return model

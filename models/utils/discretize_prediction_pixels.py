@@ -8,15 +8,10 @@ import data
 import math
 
 
-def discretize_prediction_pixels(prediction):
+def discretize_prediction_pixels(prediction, discrete_pixel_values):
     """
     Returns a prediction's pixels by closest counterparts in discrete pixel list
     """
-    # discrete_pixel_values = get_discrete_pixel_list()
-    with open(osp.join(osp.dirname(data.__file__), 'label_discrete_pixels'), newline='') as f:
-        reader = csv.reader(f)
-        discrete_pixel_data = list(reader)
-    discrete_pixel_values = sorted(map(lambda x: float(x), list(set(discrete_pixel_data[0]))))
 
     for row_ind, row in enumerate(prediction):
         for col_ind, col in enumerate(prediction):

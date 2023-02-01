@@ -315,7 +315,7 @@ def set_args():
     validation_fraction = 0.2
     batch_size = 1
     log_step_frequency = 10
-    version = -1  # Keep -1 if loading the latest model version.
+    version = -1  # Keep -1 if loading the latest corrupted_model version.
     save_top_k_checkpoints = 3
     loss_function = loss_functions.rmse_loss
 

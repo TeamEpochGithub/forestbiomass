@@ -212,7 +212,7 @@ def load_model(args):
     # However, it might be that not all weights are available this way.
     # If you have downloaded weights (in the .pt format), put them in the pre-trained-weights folder
     # and give the file the same name as the encoder you're using.
-    # If you do that, this block will try and load them for your model.
+    # If you do that, this block will try and load them for your corrupted_model.
     pre_trained_weights_dir_path = osp.join(osp.dirname(data.__file__), "pre-trained_weights")
 
     if osp.exists(osp.join(pre_trained_weights_dir_path, f"{args.encoder_name}.pt")):
@@ -243,7 +243,7 @@ def create_submissions(args):
 
     new_dataset, chip_ids = prepare_dataset_testing(args)
 
-    trainer = Trainer(accelerator="gpu", devices=[1])
+    trainer = Trainer(accelerator="gpu", devices=[0])
 
     dl = DataLoader(new_dataset, num_workers=args.dataloader_workers)
 
@@ -346,12 +346,12 @@ def set_args():
         parser.add_argument('--tiff_testing_features_path', default=str(osp.join(data_path, "imgs", "train_features")))
         parser.add_argument('--testing_ids_path', default=str(osp.join(data_path, "patch_names")), type=str)
         parser.add_argument('--submission_folder_path',
-                            default=str(osp.join(data_path, "imgs", "swinefficientnet_agbm")),  # swinres_agbm, swinefficientnet_agbm
+                            default=str(osp.join(data_path, "imgs", "train_swinefficientnet_agbm")),  # train_swinres_agbm, train_swinefficientnet_agbm
                             type=str)
     else:
         parser.add_argument('--tiff_testing_features_path', default=str(osp.join(data_path, "imgs", "test_features")))
         parser.add_argument('--testing_ids_path', default=str(osp.join(data_path, "test_patch_names")), type=str)
-        parser.add_argument('--submission_folder_path', default=str(osp.join(data_path, "imgs", "test_agbm")), type=str)
+        parser.add_argument('--submission_folder_path', default=str(osp.join(data_path, "imgs", "test_swinefficientnet_agbm")), type=str)  # test_agbm , test_swinres_agbm , test_swinefficientnet_agbm
 
     parser.add_argument('--current_model_path', default=str(osp.join(models_path, "tb_logs", model_identifier)),
                         type=str)
