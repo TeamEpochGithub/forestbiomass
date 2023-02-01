@@ -7,6 +7,7 @@ data/forest-biomass-test
 models/vit_checkpoints
 models/tb_logs
 agModels**/**
+unused/**
 tb_logs**/**
 wandb**/**
 .conda/**

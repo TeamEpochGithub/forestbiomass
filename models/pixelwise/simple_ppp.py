@@ -1,12 +1,7 @@
-import itertools
-import operator
-import sys
-
+import torch.nn as nn
 import torch
-from PIL import Image
+import pytorch_lightning as pl
 from torch.utils.data import Dataset, DataLoader
-# from torch import distributed as dist
-# import segmentation_models_pytorch as smp
 import os
 import rasterio
 import warnings
@@ -17,19 +12,102 @@ import data
 import csv
 from models.utils import loss_functions
 import argparse
-from autogluon.tabular import TabularDataset, TabularPredictor
 from tqdm import tqdm
 import pandas as pd
 from torch import nn
 from torchgeo.transforms import indices
 import models.utils.transforms as tf
-from autogluon.tabular.models.knn.knn_rapids_model import KNNRapidsModel
-from autogluon.tabular.models.lr.lr_rapids_model import LinearRapidsModel
+
 warnings.filterwarnings("ignore", category=rasterio.errors.NotGeoreferencedWarning)
+import wandb
+from pytorch_lightning.loggers import WandbLogger
+from pytorch_lightning.callbacks import ModelCheckpoint
+from pytorch_lightning import Trainer
+from pytorch_lightning.strategies import DDPStrategy
+from pytorch_lightning.loggers import TensorBoardLogger
+
+torch.set_float32_matmul_precision("medium")
+
+
+class Linear(nn.Module):
+    def __init__(self, in_channels, out_channels, latent_dim=128):
+        super(Linear, self).__init__()
+        self.linear = nn.Linear(in_channels, latent_dim)
+        self.linear2 = nn.Linear(latent_dim, latent_dim // 2)
+        self.linear3 = nn.Linear(latent_dim // 2, out_channels)
+        self.batch_norm = nn.BatchNorm1d(in_channels)
+        self.seq = nn.Sequential(
+            self.linear, nn.ReLU(), self.linear2, nn.ReLU(), self.linear3, nn.Sigmoid()
+        )
+
+    def forward(self, x):
+        x = self.batch_norm(x)
+        linear = self.seq(x)
+        return linear
+
+
+class PixelWiseNet(pl.LightningModule):
+    def __init__(self, model, lr=0.001):
+        super(PixelWiseNet, self).__init__()
+        self.lr = lr
+        self.model = model
+
+    def forward(self, x):
+        x = x.reshape(-1, x.shape[-1])
+        linear = self.model(x)
+        return linear
+
+    def training_step(self, train_batch, batch_idx):
+        x, y = train_batch
+        x = x.reshape(-1, x.shape[-1])
+        y = y.reshape(-1, y.shape[-1])
+        # print(x.shape, y.shape)
+        y_hat = self.model(x)
+        # print(y)
+        # print(y_hat)
+        loss = nn.functional.mse_loss(y_hat, y)
+        self.log("train_loss", loss, sync_dist=True)
+        self.log("train_rmse", torch.sqrt(loss) * 256, sync_dist=True)
+        return loss
+
+    def validation_step(self, val_batch, batch_idx):
+        x, y = val_batch
+        x = x.reshape(-1, x.shape[-1])
+        y = y.reshape(-1, y.shape[-1])
+        y_hat = self.model(x)
+        loss = nn.functional.mse_loss(y_hat, y)
+        self.log("val_loss", loss, sync_dist=True)
+        self.log("val_rmse", torch.sqrt(loss) * 256, sync_dist=True)
+        return loss
+
+    def test_step(self, test_batch, batch_idx):
+        x, y = test_batch
+        x = x.reshape(-1, x.shape[-1])
+        y = y.reshape(-1, y.shape[-1])
+        y_hat = self.model(x)
+        loss = nn.functional.mse_loss(y_hat, y)
+        self.log("test_loss", loss, sync_dist=True)
+        self.log("test_rmse", torch.sqrt(loss) * 256, sync_dist=True)
+        return loss
+
+    def configure_optimizers(self):
+        optimizer = torch.optim.Adam(self.parameters(), lr=self.lr)
+        return optimizer
+
 
 class ChainedSegmentationDatasetMaker(Dataset):
-    def __init__(self, training_feature_path, training_labels_path, id_list, data_type, S1_bands, S2_bands,
-                 month_selection, transform=None,test=False):
+    def __init__(
+        self,
+        training_feature_path,
+        training_labels_path,
+        id_list,
+        data_type,
+        S1_bands,
+        S2_bands,
+        month_selection,
+        transform=None,
+        test=False,
+    ):
         self.training_feature_path = training_feature_path
         self.training_labels_path = training_labels_path
         self.id_list = id_list
@@ -38,48 +116,94 @@ class ChainedSegmentationDatasetMaker(Dataset):
         self.S2_bands = S2_bands
         self.transform = transform
         self.month_selection = month_selection
-        self.test=test
+        self.test = test
 
     def __len__(self):
-        return len(self.id_list)
+        return len(self.id_list)  # *256**2
 
     def __getitem__(self, idx):
 
         id = self.id_list[idx]
         if self.test:
-            label_tensor =  torch.rand((1,256, 256))
+            label_tensor = torch.rand((1, 256, 256))
         else:
             label_path = osp.join(self.training_labels_path, f"{id}_agbm.tif")
-            label_tensor = torch.tensor(rasterio.open(label_path).read().astype(np.float32))
+            label_tensor = torch.tensor(
+                rasterio.open(label_path).read().astype(np.float32)
+            )
 
         tensor_list = []
         for month_index, month_indicator in enumerate(self.month_selection):
             if month_indicator == 0:
                 continue
-            feature_tensor = retrieve_tiff(self.training_feature_path, id, str(month_index), self.S1_bands,
-                                           self.S2_bands)#.to(torch.float16)
+            feature_tensor = retrieve_tiff(
+                self.training_feature_path,
+                id,
+                str(month_index),
+                self.S1_bands,
+                self.S2_bands,
+            )  # .to(torch.float16)
             # print(feature_tensor.shape)
-            sample = {'image': feature_tensor, 'label': label_tensor}
+            sample = {"image": feature_tensor, "label": label_tensor}
             feature_tensor = apply_transforms()(sample)
-            feature_tensor = feature_tensor['image']
+            feature_tensor = feature_tensor["image"]
             tensor_list.append(feature_tensor)
 
         tensor_list = torch.cat(tensor_list, dim=0)
-
+        # print(label_tensor.shape, tensor_list.shape)
+        tensor_list = (
+            tensor_list.reshape(
+                tensor_list.shape[0], tensor_list.shape[1] * tensor_list.shape[2]
+            ).permute(1, 0)
+            / 255
+        )
+        label_tensor = (
+            label_tensor.reshape(
+                label_tensor.shape[0], label_tensor.shape[1] * label_tensor.shape[2]
+            ).permute(1, 0)
+            / 255
+        )
+        # print(label_tensor.shape, tensor_list.shape)
+        # s = idx // (256**2)
+        # j = idx % (256**2)
+        # tensor_list, label_tensor = tensor_list[s*256**2+j,:].squeeze(), label_tensor[s*256**2+j,:].squeeze()
         return tensor_list, label_tensor
+
 
 def apply_transforms():
     return nn.Sequential(
-        tf.ClampAGBM(vmin=0., vmax=500.),  # exclude AGBM outliers, 500 is good upper limit per AGBM histograms
+        tf.ClampAGBM(
+            vmin=0.0, vmax=500.0
+        ),  # exclude AGBM outliers, 500 is good upper limit per AGBM histograms
         indices.AppendNDVI(index_nir=6, index_red=2),  # NDVI, index 15
-        indices.AppendNormalizedDifferenceIndex(index_a=11, index_b=12),  # (VV-VH)/(VV+VH), index 16
+        indices.AppendNormalizedDifferenceIndex(
+            index_a=11, index_b=12
+        ),  # (VV-VH)/(VV+VH), index 16
         indices.AppendNDBI(index_swir=8, index_nir=6),
         # Difference Built-up Index for development detection, index 17
-        indices.AppendNDRE(index_nir=6, index_vre1=3),  # Red Edge Vegetation Index for canopy detection, index 18
+        indices.AppendNDRE(
+            index_nir=6, index_vre1=3
+        ),  # Red Edge Vegetation Index for canopy detection, index 18
         indices.AppendNDSI(index_green=1, index_swir=8),  # Snow Index, index 19
-        indices.AppendNDWI(index_green=1, index_nir=6),  # Difference Water Index for water detection, index 20
-        indices.AppendSWI(index_vre1=3, index_swir2=8),)
-        # tf.DropBands(torch.device('cpu'), [0,1,2,3,4,5,6,15,16,18,20]))
+        indices.AppendNDWI(
+            index_green=1, index_nir=6
+        ),  # Difference Water Index for water detection, index 20
+        indices.AppendSWI(index_vre1=3, index_swir2=8),
+    )
+    # tf.DropBands(torch.device('cpu'), [0,1,2,3,4,5,6,15,16,18,20]))
+
+
+def create_tensor_from_bands_list(band_list):
+    band_array = np.asarray(band_list, dtype=np.float32)
+    band_tensor = torch.tensor(band_array)
+    # band_tensor/=255
+    # # normalization happens here
+    # band_tensor = (band_tensor.permute(1, 2, 0) - band_tensor.mean(dim=(1, 2))) / (
+    #     band_tensor.std(dim=(1, 2)) + 0.01
+    # )
+    # band_tensor = band_tensor.permute(2, 0, 1)
+    return band_tensor
+
 
 def retrieve_tiff(feature_path, id, month, S1_band_selection, S2_band_selection):
     if int(month) < 10:
@@ -107,144 +231,27 @@ def retrieve_tiff(feature_path, id, month, S1_band_selection, S2_band_selection)
     feature_tensor = create_tensor_from_bands_list(bands)
     return feature_tensor
 
+
 def prepare_dataset_training(args):
-    with open(args.training_ids_path, newline='') as f:
+    with open(args.training_ids_path, newline="") as f:
         reader = csv.reader(f)
         patch_name_data = list(reader)
     chip_ids = patch_name_data[0]
 
-
     training_features_path = args.tiff_training_features_path
 
-    new_dataset = ChainedSegmentationDatasetMaker(training_features_path,
-                                                  args.tiff_training_labels_path,
-                                                  chip_ids,
-                                                  args.data_type,
-                                                  args.S1_band_selection,
-                                                  args.S2_band_selection,
-                                                  args.month_selection)
+    new_dataset = ChainedSegmentationDatasetMaker(
+        training_features_path,
+        args.tiff_training_labels_path,
+        chip_ids,
+        args.data_type,
+        args.S1_band_selection,
+        args.S2_band_selection,
+        args.month_selection,
+    )
 
     return new_dataset
 
-def create_csv_files(args):
-    train_dataset = prepare_dataset_training(args)
-
-    train_size = int((1 - args.validation_fraction) * len(train_dataset))
-    valid_size = len(train_dataset) - train_size
-
-    train_set, val_set = torch.utils.data.random_split(train_dataset, [train_size, valid_size])
-
-    train_dataloader = DataLoader(train_set, batch_size=args.batch_size, shuffle=True,
-                                  num_workers=args.dataloader_workers)
-    valid_dataloader = DataLoader(val_set, batch_size=args.batch_size, shuffle=False,
-                                  num_workers=args.dataloader_workers)
-    if os.path.exists("train.csv"):
-        os.remove("train.csv")
-    if os.path.exists("val.csv"):
-        os.remove("val.csv")
-    with open("train.csv", 'a') as f:
-        for (x, y) in tqdm(train_dataloader):
-            row=np.concatenate([x.detach().cpu().numpy().reshape(x.shape[1],-1).transpose(1,0),y.detach().cpu().numpy().reshape(y.shape[1],-1).transpose(1,0)], axis=1)
-            print(row.shape)
-            np.savetxt(f,row)
-    with open("val.csv", 'a') as f:
-        for (x, y) in tqdm(valid_dataloader):
-            row=np.concatenate([x.detach().cpu().numpy().reshape(x.shape[1],-1).transpose(1,0),y.detach().cpu().numpy().reshape(y.shape[1],-1).transpose(1,0)], axis=1)
-            print(row.shape)
-            np.savetxt(f,row)
-
-
-def train(args):
-    train_dataset = prepare_dataset_training(args)
-
-    train_size = int((1 - args.validation_fraction) * len(train_dataset))
-    valid_size = len(train_dataset) - train_size
-
-    train_set, val_set = torch.utils.data.random_split(train_dataset, [train_size, valid_size])
-
-    train_dataloader = DataLoader(train_set, batch_size=args.batch_size, shuffle=True,
-                                  num_workers=args.dataloader_workers)
-    valid_dataloader = DataLoader(val_set, batch_size=args.batch_size, shuffle=False,
-                                  num_workers=args.dataloader_workers)
-    X=[]
-    Y=[]
-    c=0
-    lower=0
-    upper=65
-    for (x, y) in tqdm(train_dataloader):
-        X.append(x.detach().cpu().numpy().reshape(x.shape[1],-1).transpose(1,0))
-        Y.append(y.detach().cpu().numpy().reshape(y.shape[1],-1).transpose(1,0))
-        c+=1
-        if c<lower:
-            continue
-        if c>upper:
-            break
-    X=np.array(X)
-    X=X.reshape(X.shape[0]*X.shape[1],X.shape[2])
-    print(X.shape)
-    Y=np.array(Y)
-    Y=Y.reshape(Y.shape[0]*Y.shape[1],Y.shape[2])
-    X = pd.DataFrame(X)
-    X["target"]=Y
-    subsample_size = 20  # subsample subset of data for faster demo, try setting this to much larger values
-    train_data = X.sample(n=subsample_size, random_state=0)
-    print(train_data.head())
-    metric = "rmse" #'mean_absolute_error'
-    save_path = 'agModels_3'  # specifies folder to store trained models
-    #predictor = TabularPredictor(label="target", problem_type="regression", path=save_path,eval_metric = metric).fit(X, time_limit=60*60*12, presets='best_quality', holdout_frac=0.05,num_cpus=12)
-    predictor = TabularPredictor(label="target", problem_type="regression", path=save_path,eval_metric = metric).fit(
-    X,
-    presets='best_quality',
-    # hyperparameters = 'light'
-    hyperparameters={
-        KNNRapidsModel: {},
-        LinearRapidsModel: {},
-        'RF': {},
-        'XGB': {'ag_args_fit': {'num_gpus': 2}},
-        'CAT': {'ag_args_fit': {'num_gpus': 2}},
-        'GBM': [{}, {'extra_trees': True, 'ag_args': {'name_suffix': 'XT'}}, 'GBMLarge'],
-        'NN_MXNET': {'ag_args_fit': {'num_gpus': 2}},
-        'FASTAI': {'ag_args_fit': {'num_gpus': 2}},
-    },
-)
-    del X
-    del Y
-
-    # predictor = TabularPredictor.load(save_path)  # unnecessary, just demonstrates how to load previously-trained predictor from file
-    test_data_nolab=[]
-    label=[]
-    c=0
-    lower=0
-    upper=5
-    for (x, y) in tqdm(valid_dataloader):
-        test_data_nolab.append(x.detach().cpu().numpy().reshape(x.shape[1],-1).transpose(1,0))
-        label.append(y.detach().cpu().numpy().reshape(y.shape[1],-1).transpose(1,0))
-        c+=1
-        if c<lower:
-            continue
-        if c>upper:
-            break
-    test_data_nolab=np.array(test_data_nolab)  
-    test_data_nolab=test_data_nolab.reshape(test_data_nolab.shape[0]*test_data_nolab.shape[1],test_data_nolab.shape[2])
-    label=np.array(label)
-    label=label.reshape(label.shape[0]*label.shape[1],label.shape[2])
-    test_data_nolab = pd.DataFrame(test_data_nolab)
-    test_data=test_data_nolab.copy()
-    test_data["target"]=label
-    y_pred = predictor.predict(test_data_nolab)
-    print("Predictions:  \n", y_pred)
-    perf = predictor.evaluate_predictions(y_true=test_data["target"], y_pred=y_pred, auxiliary_metrics=True)
-    predictor.leaderboard(test_data, silent=True)
-
-def create_tensor_from_bands_list(band_list):
-    band_array = np.asarray(band_list, dtype=np.float32)
-    band_tensor = torch.tensor(band_array)
-    # # normalization happens here
-    # band_tensor = (band_tensor.permute(1, 2, 0) - band_tensor.mean(dim=(1, 2))) / (
-    #     band_tensor.std(dim=(1, 2)) + 0.01
-    # )
-    # band_tensor = band_tensor.permute(2, 0, 1)
-    return band_tensor
 
 def set_args():
     band_segmenter = "Unet"
@@ -256,14 +263,14 @@ def set_args():
     month_encoder_weights = "imagenet"
 
     data_type = "tiff"  # options are "npy" or "tiff"
-    epochs = 20
-    learning_rate = 1e-4
-    dataloader_workers = 12
+    epochs = 50
+    learning_rate = 1e-3
+    dataloader_workers = 10
     validation_fraction = 0.2
-    batch_size = 1
+    batch_size = 4
     log_step_frequency = 10
     version = -1  # Keep -1 if loading the latest model version.
-    save_top_k_checkpoints = 3
+    save_top_k_checkpoints = 1
     loss_function = loss_functions.rmse_loss
 
     missing_month_repair_mode = "zeros"
@@ -275,13 +282,27 @@ def set_args():
         "December": 0,
         "January": 0,
         "February": 0,
-        "March": 1,
+        "March": 0,
         "April": 1,
         "May": 1,
         "June": 1,
         "July": 1,
         "August": 1,
     }
+    # month_selection = {
+    #     "September": 1,
+    #     "October": 1,
+    #     "November": 1,
+    #     "December": 1,
+    #     "January": 1,
+    #     "February": 1,
+    #     "March": 1,
+    #     "April": 1,
+    #     "May": 1,
+    #     "June": 1,
+    #     "July": 1,
+    #     "August": 1,
+    # }
 
     month_list = list(month_selection.values())
 
@@ -356,7 +377,7 @@ def set_args():
     parser.add_argument("--model_version", default=version, type=int)
     parser.add_argument("--data_type", default=data_type, type=str)
 
-    data_path = "C:/Users/kuipe/Desktop/Epoch/forestbiomass/data"
+    data_path = osp.dirname(data.__file__)
     models_path = osp.dirname(models.__file__)
 
     parser.add_argument(
@@ -412,6 +433,7 @@ def set_args():
     parser.add_argument(
         "--missing_month_repair_mode", default=missing_month_repair_mode, type=str
     )
+    parser.add_argument("--in_channels", default=132, type=int)  # 264,132
 
     args = parser.parse_args()
 
@@ -423,6 +445,53 @@ def set_args():
     return args
 
 
+def train(args, train_dataloader, valid_dataloader):
+    logger = WandbLogger(project="forestbiomass", name="pixelwise_allbands")
+    tb_logger = TensorBoardLogger("tb_logs", name="pixelwise_pytorch")
+    checkpoint_callback = ModelCheckpoint(
+        save_top_k=args.save_top_k_checkpoints,
+        monitor="val_rmse",
+        mode="min",
+    )
+    linear_model = Linear(in_channels=args.in_channels, out_channels=1)
+    model = PixelWiseNet(linear_model, lr=args.learning_rate)
+    trainer = Trainer(
+        accelerator="gpu",
+        devices=2,
+        max_epochs=args.epochs,
+        logger=[tb_logger, logger],
+        log_every_n_steps=args.log_step_frequency,
+        callbacks=[checkpoint_callback],
+        num_sanity_val_steps=0,
+        strategy=DDPStrategy(
+            process_group_backend="gloo", find_unused_parameters=False
+        ),
+    )
+
+    trainer.fit(
+        model, train_dataloaders=train_dataloader, val_dataloaders=valid_dataloader
+    )
+
+
 if __name__ == "__main__":
     args = set_args()
-    train(args)
+    train_dataset = prepare_dataset_training(args)
+    train_size = int((1 - args.validation_fraction) * len(train_dataset))
+    valid_size = len(train_dataset) - train_size
+    train_set, val_set = torch.utils.data.random_split(
+        train_dataset, [train_size, valid_size]
+    )
+    train_dataloader = DataLoader(
+        train_set,
+        batch_size=args.batch_size,
+        shuffle=True,
+        num_workers=args.dataloader_workers,
+    )
+    val_dataloader = DataLoader(
+        val_set,
+        batch_size=args.batch_size,
+        shuffle=False,
+        num_workers=args.dataloader_workers,
+    )
+    save_path = "pixelwise_pytorch"  # specifies folder to store trained models
+    train(args, train_dataloader, val_dataloader)
