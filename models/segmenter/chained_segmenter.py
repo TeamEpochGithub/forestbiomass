@@ -39,6 +39,56 @@ warnings.filterwarnings("ignore", category=rasterio.errors.NotGeoreferencedWarni
 
 class ChainedSegmentationDatasetMaker(Dataset):
     def __init__(self, training_feature_path, training_labels_path, id_list, data_type,
+                 band_selection, month_selection, corrupted_transform_method, transform=None):
+        self.training_feature_path = training_feature_path
+        self.training_labels_path = training_labels_path
+        self.id_list = id_list
+        self.data_type = data_type
+        self.transform = transform
+        self.band_selection = band_selection
+        self.month_selection = month_selection
+        self.corrupted_transform_method = corrupted_transform_method
+
+    def __len__(self):
+        return len(self.id_list)
+
+    def __getitem__(self, idx):
+
+        id = self.id_list[idx]
+
+        label_path = osp.join(self.training_labels_path, f"{id}_agbm.tif")
+        label_image = rasterio.open(label_path).read().astype(np.float32)
+        label_tensor = torch.from_numpy(label_image)
+
+        all_bands = []
+
+        for month_index, month_indicator in enumerate(self.month_selection):
+
+            if month_indicator == 0:
+                continue
+
+            band_images = retrieve_tiff(self.training_feature_path, id, str(month_index), self.band_selection)
+
+            all_bands.extend(band_images)
+
+        tensor_list = []
+
+        for index, current_band in enumerate(np.array_split(np.asarray(all_bands), self.month_selection.count(1))):
+            tensor_bands = torch.tensor(current_band)
+
+            dictionary_tensor = {'image': tensor_bands}
+
+            expanded_tensor = select_bands(bands_to_keep=self.band_selection, corrupted_transform_method=self.corrupted_transform_method)(dictionary_tensor)['image']
+
+            tensor_list.append(expanded_tensor)
+
+        tensor_list = torch.cat(tensor_list, dim=0)
+
+        return tensor_list, label_tensor
+
+
+class AugmentedChainedSegmentationDatasetMaker(Dataset):
+    def __init__(self, training_feature_path, training_labels_path, id_list, data_type,
                  band_selection, month_selection, data_augmentation_pipeline, transform=None):
         self.training_feature_path = training_feature_path
         self.training_labels_path = training_labels_path
@@ -97,13 +147,14 @@ def albumentation_input_wrapper(images, label_image, augmenter):
 
 
 class ChainedSegmentationSubmissionDatasetMaker(Dataset):
-    def __init__(self, testing_feature_path, id_list, data_type, band_selection, month_selection, transform=None):
+    def __init__(self, testing_feature_path, id_list, data_type, band_selection, month_selection, corrupted_transform_method, transform=None):
         self.testing_feature_path = testing_feature_path
         self.id_list = id_list
         self.data_type = data_type
         self.transform = transform
         self.band_selection = band_selection
         self.month_selection = month_selection
+        self.corrupted_transform_method = corrupted_transform_method
 
     def __len__(self):
         return len(self.id_list)
@@ -124,7 +175,7 @@ class ChainedSegmentationSubmissionDatasetMaker(Dataset):
 
             dictionary_tensor = {'image': tensor_bands}  # Dict required for usage of torch transforms
 
-            expanded_tensor = select_bands(bands_to_keep=self.band_selection)(dictionary_tensor)['image']
+            expanded_tensor = select_bands(bands_to_keep=self.band_selection, corrupted_transform_method=self.corrupted_transform_method)(dictionary_tensor)['image']
 
             tensor_list.append(expanded_tensor)
 
@@ -158,20 +209,21 @@ def retrieve_tiff(feature_path, id, month, band_selection):
     return bands
 
 
-def select_bands(bands_to_keep):
+def select_bands(bands_to_keep, corrupted_transform_method):
     return nn.Sequential(
-        indices.AppendNDVI(index_nir=6, index_red=2),  # NDVI, index 15
-        indices.AppendNormalizedDifferenceIndex(index_a=11, index_b=12),  # (VV-VH)/(VV+VH), index 16
-        indices.AppendNDBI(index_swir=8, index_nir=6),
+        #indices.AppendNDVI(index_nir=6, index_red=2),  # NDVI, index 15
+        #indices.AppendNormalizedDifferenceIndex(index_a=11, index_b=12),  # (VV-VH)/(VV+VH), index 16
+        #indices.AppendNDBI(index_swir=8, index_nir=6),
         # Difference Built-up Index for development detection, index 17
-        indices.AppendNDRE(index_nir=6, index_vre1=3),  # Red Edge Vegetation Index for canopy detection, index 18
-        indices.AppendNDSI(index_green=1, index_swir=8),  # Snow Index, index 19
-        indices.AppendNDWI(index_green=1, index_nir=6),  # Difference Water Index for water detection, index 20
-        indices.AppendSWI(index_vre1=3, index_swir2=8),
+        #indices.AppendNDRE(index_nir=6, index_vre1=3),  # Red Edge Vegetation Index for canopy detection, index 18
+        #indices.AppendNDSI(index_green=1, index_swir=8),  # Snow Index, index 19
+        #indices.AppendNDWI(index_green=1, index_nir=6),  # Difference Water Index for water detection, index 20
+        #indices.AppendSWI(index_vre1=3, index_swir2=8),
         # Standardized Water-Level Index for water detection, index 21
-        tf.AppendRatioAB(index_a=11, index_b=12),  # VV/VH Ascending, index 22
-        tf.AppendRatioAB(index_a=13, index_b=14),  # VV/VH Descending, index 23
+        #tf.AppendRatioAB(index_a=11, index_b=12),  # VV/VH Ascending, index 22
+        #tf.AppendRatioAB(index_a=13, index_b=14),  # VV/VH Descending, index 23
         tf.DropBands(torch.device('cpu'), bands_to_keep),  # DROPS ALL BUT SPECIFIED bands_to_keep
+        corrupted_transform_method
     )
 
 
@@ -237,7 +289,7 @@ class ChainedSegmenter(pl.LightningModule):
         return loss
 
     def configure_optimizers(self):
-        return [torch.optim.Adam(self.parameters(), lr=self.learning_rate)]
+        return [torch.optim.AdamW(self.parameters(), lr=self.learning_rate)]
 
     def forward(self, x):
         normalizer = nn.BatchNorm2d(self.band_count).cuda()
@@ -288,13 +340,17 @@ def prepare_dataset_training(args):
 
     training_features_path = args.tiff_training_features_path
 
+    corrupted_transform_method, transform_channels = tf.select_transform_method(args.transform_method,
+                                                                                in_channels=len(
+                                                                                    args.band_selection))
+
     new_dataset = ChainedSegmentationDatasetMaker(training_features_path,
                                                   args.tiff_training_labels_path,
                                                   chip_ids,
                                                   args.data_type,
                                                   args.band_selection,
                                                   args.month_selection,
-                                                  args.data_augmentation_pipeline)
+                                                  corrupted_transform_method)
 
     return new_dataset
 
@@ -307,11 +363,16 @@ def prepare_dataset_testing(args):
 
     testing_features_path = args.tiff_testing_features_path
 
+    corrupted_transform_method, transform_channels = tf.select_transform_method(args.transform_method,
+                                                                                in_channels=len(
+                                                                                    args.band_selection))
+
     new_dataset = ChainedSegmentationSubmissionDatasetMaker(testing_features_path,
                                                             chip_ids,
                                                             args.data_type,
                                                             args.band_selection,
-                                                            args.month_selection)
+                                                            args.month_selection,
+                                                            corrupted_transform_method)
     return new_dataset, chip_ids
 
 
@@ -578,32 +639,34 @@ def submission_generator(args):
 
 
 def set_args():
-    band_segmenter = "Unet"
-    band_encoder = "efficientnet-b4"
+    band_segmenter = "FPN"
+    band_encoder = "efficientnet-b2"
     band_encoder_weights = "imagenet"
 
-    month_segmenter = "Unet"
-    month_encoder = "efficientnet-b4"
+    month_segmenter = "FPN"
+    month_encoder = "efficientnet-b2"
     month_encoder_weights = "imagenet"
 
     data_type = "tiff"  # options are "npy" or "tiff"
     epochs = 100
     learning_rate = 1e-4
-    dataloader_workers = 12
+    dataloader_workers = 44
     validation_fraction = 0.2
     batch_size = 8
     log_step_frequency = 50
     version = -1  # Keep -1 if loading the latest model version.
     save_top_k_checkpoints = 1
-    training_loss_function = loss_functions.rmse_loss
+    training_loss_function = loss_functions.huber_loss
     validation_loss_function = loss_functions.rmse_loss
+
+    transform_method = "replace_corrupted_0s"
 
     missing_month_repair_mode = "zeros"
 
     multiprocessing_strategy = None  # replace with ddp if using more than 1 device
-    device_count = 2
+    device_count = 1
 
-    warm_start = True
+    warm_start = False
 
     month_selection = {
         "September": 1,
@@ -700,7 +763,7 @@ def set_args():
     data_path = osp.dirname(data.__file__)
     models_path = osp.dirname(models.__file__)
 
-    data_path = r"C:\Users\kuipe\Desktop\Epoch\forestbiomass\data"
+    #data_path = r"C:\Users\kuipe\Desktop\Epoch\forestbiomass\data"
 
     # Note: Converted data does not have an explicit label path, as labels are stored within training_features
     parser.add_argument('--converted_training_features_path', default=str(osp.join(data_path, "converted")), type=str)
@@ -731,6 +794,8 @@ def set_args():
     parser.add_argument('--training_loss_function', default=training_loss_function)
     parser.add_argument('--validation_loss_function', default=validation_loss_function)
 
+    parser.add_argument('--transform_method', default=transform_method, type=str)
+
     parser.add_argument('--missing_month_repair_mode', default=missing_month_repair_mode, type=str)
 
     parser.add_argument('--multiprocessing_strategy', default=multiprocessing_strategy, type=str)
@@ -752,5 +817,5 @@ def set_args():
 
 if __name__ == '__main__':
     args = set_args()
-    #train(args)
-    submission_generator(args)
+    train(args)
+    #submission_generator(args)

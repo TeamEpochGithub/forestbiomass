@@ -5,7 +5,7 @@
 #SBATCH --partition=gpu
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=48
-#SBATCH --gpus-per-task=1
+#SBATCH --gpus-per-task=2
 #SBATCH --mem-per-cpu=4G
 #SBATCH --account=research-eemcs-insy
 
@@ -22,8 +22,8 @@ conda activate forest
 ### ==============COMMENT OUT AFTER FIRST RUN==============
 #conda install pytorch torchvision torchaudio pytorch-cuda=11.6 -c pytorch -c nvidia
 #conda install -c conda-forge rasterio segmentation-models-pytorch pytorch-lightning torchgeo pillow gdal poppler
-conda install -c conda-forge imgaug
-conda install -c conda-forge albumentations
+#conda install -c conda-forge imgaug
+#conda install -c conda-forge albumentations
 ### =======================================================
 
 srun python /home/lvanblokland/forestbiomass/models/segmenter/chained_segmenter.py
