@@ -309,8 +309,8 @@ class SentinelTiffDataloaderSubmission_all(Dataset):
         for month in range(5, 12):
             if month < 10:
                 month = "0" + str(month)
-            month_patch_path = osp.join(self.testing_features_path, f"{current_id}_S2_{month}.tif")
 
+            month_patch_path = osp.join(self.testing_features_path, f"{current_id}_S2_{month}.tif")
             if osp.exists(month_patch_path):
                 feature_tensor = retrieve_tiff(self.testing_features_path, current_id, month)
 
