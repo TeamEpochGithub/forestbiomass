@@ -25,6 +25,7 @@ from pytorch_lightning.callbacks import ModelCheckpoint
 from pytorch_lightning import Trainer
 from pytorch_lightning.strategies import DDPStrategy
 from pytorch_lightning.loggers import TensorBoardLogger
+from PIL import Image
 
 torch.set_float32_matmul_precision("medium")
 
@@ -251,6 +252,73 @@ def prepare_dataset_training(args):
     )
 
     return new_dataset
+
+
+def prepare_dataset_testing(args):
+    with open(args.training_ids_path, newline="") as f:
+        reader = csv.reader(f)
+        patch_name_data = list(reader)
+    chip_ids = patch_name_data[0]
+
+    training_features_path = args.tiff_training_features_path
+
+    new_dataset = ChainedSegmentationDatasetMaker(
+        training_features_path,
+        args.tiff_training_labels_path,
+        chip_ids,
+        args.data_type,
+        args.S1_band_selection,
+        args.S2_band_selection,
+        args.month_selection,
+    )
+
+    return new_dataset, chip_ids
+
+
+def load_model(args):
+    print("Getting saved model...")
+
+    assert osp.exists(args.current_model_path) is True, "requested model does not exist"
+
+    log_folder_path = args.current_model_path
+
+    version_dir = list(os.scandir(log_folder_path))[-1]
+
+    checkpoint_dir_path = osp.join(log_folder_path, version_dir, "checkpoints")
+    latest_checkpoint_name = list(os.scandir(checkpoint_dir_path))[-1]
+    latest_checkpoint_path = osp.join(checkpoint_dir_path, latest_checkpoint_name)
+
+    linear_model = Linear(in_channels=args.in_channels, out_channels=1)
+    model = PixelWiseNet(linear_model, lr=args.learning_rate)
+
+    checkpoint = torch.load(str(latest_checkpoint_path))
+    model.load_state_dict(checkpoint["state_dict"])
+
+    return model
+
+
+def predict(args, train_dataloader):
+    model = load_model(args)
+    trainer = Trainer(
+        accelerator="gpu",
+        devices=2,
+        max_epochs=args.epochs,
+        log_every_n_steps=args.log_step_frequency,
+        num_sanity_val_steps=0,
+        strategy=DDPStrategy(process_group_backend="gloo", find_unused_parameters=True),
+    )
+    preds = trainer.predict(model, train_dataloaders=train_dataloader)
+    return preds
+
+
+def make_submission_format(predictions, chip_ids):
+    transformed_predictions = [x.cpu().squeeze().detach().numpy() for x in predictions]
+    linked_tensor_list = list(zip(chip_ids, transformed_predictions))
+    for current_id, current_tensor in linked_tensor_list:
+        agbm_path = osp.join(args.submission_folder_path, f"{current_id}_agbm.tif")
+        im = Image.fromarray(current_tensor)
+        im.save(agbm_path)
+    print("Finished creating submission.")
 
 
 def set_args():
@@ -495,3 +563,13 @@ if __name__ == "__main__":
     )
     save_path = "pixelwise_pytorch"  # specifies folder to store trained models
     train(args, train_dataloader, val_dataloader)
+    ###
+    train_dataset, chip_ids = prepare_dataset_training(args)
+    train_dataloader = DataLoader(
+        train_dataset,
+        batch_size=args.batch_size,
+        shuffle=False,
+        num_workers=args.dataloader_workers,
+    )
+    preds = predict(args, train_dataloader)
+    make_submission_format(preds, chip_ids)
