@@ -9,6 +9,7 @@ models/vit_checkpoints
 models/tb_logs/**
 tb_logs/**
 wandb/**
+unused/**
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
