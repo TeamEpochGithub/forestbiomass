@@ -1,7 +1,6 @@
 import rasterio
 from torch import nn
 from torchgeo.transforms import indices
-
 import models.utils.transforms as tf
 import numpy as np
 import os.path as osp
@@ -103,6 +102,11 @@ class SubmissionDataLoader(Dataset):
     def __len__(self):
         return len(self.id_month_list)
 
+    def to_numpy(self,x):
+        if isinstance(x, torch.Tensor):
+            return x.detach().cpu().numpy()
+        return x
+
     def __getitem__(self, idx):
         id, month = self.id_month_list[idx]
 
@@ -134,7 +138,8 @@ class SubmissionDataLoader(Dataset):
             tf.AppendRatioAB(index_a=11, index_b=12),  # VV/VH Ascending, index 22
             tf.AppendRatioAB(index_a=13, index_b=14),  # VV/VH Descending, index 23
             tf.DropBands(torch.device('cpu'), self.bands_to_keep),  # DROPS ALL BUT SPECIFIED bands_to_keep
-            self.corrupted_transform_method  # Applies corrupted band transformation
+            self.corrupted_transform_method,  # Applies corrupted band transformation
+            # self.to_numpy(),
         )
 
         sample = {'image': all_tensor, 'label': label_tensor}  # 'image' and 'label' are used by torchgeo
@@ -214,6 +219,8 @@ class SentinelTiffDataloader(Dataset):
 
         selected_tensor = apply_transforms(bands_to_keep=self.bands_to_keep,
                                            corrupted_transform_method=self.corrupted_transform_method)(sample)
+        print(feature_tensor.shape)                                    
+        print(selected_tensor['image'].shape)
 
         # return feature_tensor, label_tensor
         # return selected_tensor['image'], selected_tensor['label']
