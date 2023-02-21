@@ -1,4 +1,16 @@
 .idea
+data/imgs
+data/converted
+data/testing_converted
+data/forest-biomass
+data/forest-biomass-test
+models/vit_checkpoints
+models/tb_logs
+agModels**/**
+unused/**
+tb_logs**/**
+wandb**/**
+.conda/**
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
